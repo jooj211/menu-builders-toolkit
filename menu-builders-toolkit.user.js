@@ -18,10 +18,10 @@
   console.log('[MBT] Menu Builders\' Toolkit loaded');
 
   // Only run on menus pages (adjust if needed)
-  if (!location.pathname.includes('/menus')) {
-    console.log('[MBT] Not on menus page, exiting');
-    return;
-  }
+  //  if (!location.pathname.includes('/menus')) {
+  //    console.log('[MBT] Not on menus page, exiting');
+  //    return;
+  //  }
 
   // ---- Feature 1: Modifier tags on menu items ----
 
@@ -575,6 +575,16 @@
     async function smartPaste(text) {
       if (!text) return;
       const active = document.activeElement;
+
+      // Select all before pasting (replacement behavior)
+      if (active) {
+        if (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA') {
+          active.select();
+        } else if (active.isContentEditable) {
+          document.execCommand('selectAll', false, null);
+        }
+      }
+
       const success = document.execCommand('insertText', false, text);
       if (!success) {
         if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) {
@@ -669,7 +679,7 @@
         area.style.height = '120px';
         area.style.marginBottom = '8px';
         const tokens = State.getTokens();
-        area.value = tokens.join('\\n');
+        area.value = tokens.join('\n');
         panel.appendChild(area);
 
         const bar = document.createElement('div');
@@ -680,7 +690,7 @@
         const saveBtn = document.createElement('button');
         saveBtn.textContent = 'Save List';
         saveBtn.onclick = () => {
-          const lines = area.value.split('\\n').filter(x => x.trim());
+          const lines = area.value.split('\n').filter(x => x.trim());
           State.saveTokens(lines);
           State.saveIndex(0);
           refreshUI();
@@ -762,7 +772,7 @@
           State.saveIndex(0);
 
           // 4. Feedback
-          const proceed = confirm(`Scanned & Cleaned ${cleanedList.length} items.\\n\\nSwitch to Sequential Paste mode now?`);
+          const proceed = confirm(`Scanned & Cleaned ${cleanedList.length} items.\n\nSwitch to Sequential Paste mode now?`);
           if (proceed) {
             State.saveMode(MODES.PASTE);
             refreshUI();
