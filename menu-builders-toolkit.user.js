@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Menu Builders' Toolkit
-// @namespace    https://github.com/jooj210/menu-builders-toolkit
+// @namespace    https://github.com/jooj211/menu-builders-toolkit
 // @version      0.1.0
 // @description  Helper tools for Popmenu menu builders (modifier tags, etc.)
 // @author       Jonatas Dias
@@ -317,6 +317,7 @@
 
     const KEYS = {
       TOKENS: 'mbt_tokens',
+      RAW_TOKENS: 'mbt_raw_tokens',
       INDEX: 'mbt_index',
       MODE: 'mbt_mode'
     };
@@ -328,6 +329,12 @@
         catch { return []; }
       },
       saveTokens: (t) => localStorage.setItem(KEYS.TOKENS, JSON.stringify(t)),
+
+      getRawTokens: () => {
+        try { return JSON.parse(localStorage.getItem(KEYS.RAW_TOKENS) || '[]'); }
+        catch { return []; }
+      },
+      saveRawTokens: (t) => localStorage.setItem(KEYS.RAW_TOKENS, JSON.stringify(t)),
 
       getIndex: () => parseInt(localStorage.getItem(KEYS.INDEX) || '0', 10),
       saveIndex: (i) => localStorage.setItem(KEYS.INDEX, i),
@@ -371,15 +378,23 @@
     async function smartPaste(text) {
       if (!text) return;
       const active = document.activeElement;
+
+      // Feature: Select all before pasting (replacement behavior)
+      if (active) {
+        if (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA') {
+          active.select();
+        } else if (active.isContentEditable) {
+          document.execCommand('selectAll', false, null);
+        }
+      }
+
       const success = document.execCommand('insertText', false, text);
       if (!success) {
         if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) {
-          const start = active.selectionStart;
-          const end = active.selectionEnd;
-          const val = active.value;
-          active.value = val.slice(0, start) + text + val.slice(end);
-          active.selectionStart = active.selectionEnd = start + text.length;
+          // If execCommand failed, do manual replacement
+          active.value = text;
           active.dispatchEvent(new Event('input', { bubbles: true }));
+          active.dispatchEvent(new Event('change', { bubbles: true }));
         } else {
           try { await navigator.clipboard.writeText(text); } catch (e) { }
         }
@@ -431,7 +446,7 @@
 
       const select = document.createElement('select');
       select.innerHTML = `
-        <option value="${MODES.PASTE}">Sequential Paste (F2)</option>
+        <option value="${MODES.PASTE}">Sequential Paste (F2/F4)</option>
         <option value="${MODES.SCAN}">Image Scanner</option>
       `;
       select.value = State.getMode();
@@ -454,10 +469,15 @@
       }
 
       function renderPasteMode() {
-        const desc = document.createElement('p');
+        const desc = document.createElement('div');
         desc.style.fontSize = '12px';
         desc.style.color = '#666';
-        desc.textContent = 'Pastes tokens line-by-line. Press F2 to paste within any field.';
+        desc.style.marginBottom = '10px';
+        desc.innerHTML = `
+            <strong>F2</strong>: Paste Clean & Next<br/>
+            <strong>F4</strong>: Paste Original & Next<br/>
+            <span style="color:#888">(Shift+F2/F4: Paste without advancing)</span>
+          `;
         panel.appendChild(desc);
 
         const area = document.createElement('textarea');
@@ -466,6 +486,10 @@
         area.style.marginBottom = '8px';
         const tokens = State.getTokens();
         area.value = tokens.join('\n');
+        // Warn if user edits manually, raw tokens might break
+        area.oninput = () => {
+          // We could implement complex syncing but for now let's just save.
+        };
         panel.appendChild(area);
 
         const bar = document.createElement('div');
@@ -478,6 +502,8 @@
         saveBtn.onclick = () => {
           const lines = area.value.split('\n').filter(x => x.trim());
           State.saveTokens(lines);
+          // If user edits manually, we probably should clear Raw tokens or try to keep up
+          // For safety/simplicity, let's keep index 0
           State.saveIndex(0);
           refreshUI();
         };
@@ -502,7 +528,7 @@
                 <li>Scroll page to load <strong>all</strong> images.</li>
                 <li>Click <strong>Scan & Load</strong>.</li>
             </ol>
-            <p>This will extract titles, clean them (fix casing, remove extensions), and <strong>overwrite</strong> the Sequential Paste list.</p>
+            <p>This extracts titles, cleans them, and loads both <strong>Clean</strong> (for F2) and <strong>Raw</strong> (for F4) versions.</p>
           `;
         panel.appendChild(desc);
 
@@ -516,12 +542,10 @@
         scanBtn.style.borderRadius = '4px';
         scanBtn.style.cursor = 'pointer';
         scanBtn.onclick = () => {
-          // 1. Selector strategy (Logic from parse.py with BS4 selector)
-          // div[data-cy^="media-tile-image-title-"] h6
+          // 1. Selector strategy
           const nodes = document.querySelectorAll('div[data-cy^="media-tile-image-title-"] h6');
           let rawNames = Array.from(nodes).map(el => el.textContent.trim()).filter(Boolean);
 
-          // Fallback if that selector fails (generic images)
           if (rawNames.length === 0) {
             const imgs = document.querySelectorAll('img');
             rawNames = Array.from(imgs).map(img => img.title || img.alt).filter(t => t && t.trim());
@@ -532,33 +556,36 @@
             return;
           }
 
-          // 2. Clean & Dedupe (Logic from fix.py)
+          // 2. Clean & Dedupe
           const seen = new Set();
-          const cleanedList = [];
+          const cleanList = [];
+          const rawList = [];
 
           for (const raw of rawNames) {
             const clean = Cleaner.clean(raw);
             if (!clean) continue;
 
-            // Dedupe Key: case-folded, space-collapsed
+            // Dedupe Key: case-folded, space-collapsed CLEAN name
             const key = clean.toLowerCase().replace(/\s+/g, ' ');
             if (seen.has(key)) continue;
 
             seen.add(key);
-            cleanedList.push(clean);
+            cleanList.push(clean);
+            rawList.push(raw);
           }
 
-          if (cleanedList.length === 0) {
+          if (cleanList.length === 0) {
             alert("Found items but they were filtered out by cleaning rules.");
             return;
           }
 
-          // 3. Save to Paste List
-          State.saveTokens(cleanedList);
+          // 3. Save to Paste Lists
+          State.saveTokens(cleanList);
+          State.saveRawTokens(rawList); // Save parallel list
           State.saveIndex(0);
 
           // 4. Feedback
-          const proceed = confirm(`Scanned & Cleaned ${cleanedList.length} items.\n\nSwitch to Sequential Paste mode now?`);
+          const proceed = confirm(`Scanned & Cleaned ${cleanList.length} items.\n\nSwitch to Sequential Paste mode now?`);
           if (proceed) {
             State.saveMode(MODES.PASTE);
             refreshUI();
@@ -570,24 +597,47 @@
 
     // --- Hotkey Listener ---
     document.addEventListener('keydown', async (e) => {
-      // F2 Logic
-      if (e.key === 'F2' && !e.shiftKey && !e.ctrlKey && !e.altKey) {
-        // Context-aware: Only works if mode is PASTE
-        // (Or user might expect it always work? The request says "when they select it... commands preset themselves")
-        // So we strictly respect the current mode.
-        if (State.getMode() !== MODES.PASTE) return;
+      // Only works if mode is PASTE
+      if (State.getMode() !== MODES.PASTE) return;
 
+      // F2: Paste CLEAN
+      if (e.key === 'F2') {
         const tokens = State.getTokens();
         if (!tokens.length) return;
-
         e.preventDefault(); e.stopPropagation();
 
         const idx = State.getIndex();
         await smartPaste(tokens[idx]);
 
-        State.saveIndex((idx + 1) % tokens.length);
-        // Refresh UI if open to show progress
+        // Advance unless Shift held
+        if (!e.shiftKey) {
+          State.saveIndex((idx + 1) % tokens.length);
+        }
         if (panel.style.display === 'block') refreshUI();
+        return;
+      }
+
+      // F4: Paste RAW
+      if (e.key === 'F4') {
+        // Try to get raw tokens, fallback to clean tokens
+        const rawTokens = State.getRawTokens();
+        const cleanTokens = State.getTokens();
+
+        // Fallback: If no raw tokens (manually edited list?), use clean
+        const tokens = (rawTokens.length === cleanTokens.length) ? rawTokens : cleanTokens;
+
+        if (!tokens.length) return;
+        e.preventDefault(); e.stopPropagation();
+
+        const idx = State.getIndex();
+        await smartPaste(tokens[idx]);
+
+        // Advance unless Shift held
+        if (!e.shiftKey) {
+          State.saveIndex((idx + 1) % tokens.length);
+        }
+        if (panel.style.display === 'block') refreshUI();
+        return;
       }
     });
 
