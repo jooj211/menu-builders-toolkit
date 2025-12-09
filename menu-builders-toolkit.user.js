@@ -8,7 +8,6 @@
 // @run-at       document-idle
 // @grant        none
 //
-// NOTE: After first push, come back and set @updateURL and @downloadURL:
 // @updateURL    https://raw.githubusercontent.com/jooj211/menu-builders-toolkit/main/menu-builders-toolkit.user.js
 // @downloadURL  https://raw.githubusercontent.com/jooj211/menu-builders-toolkit/main/menu-builders-toolkit.user.js
 // ==/UserScript==
