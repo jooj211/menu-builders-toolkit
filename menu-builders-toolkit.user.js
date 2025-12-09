@@ -506,4 +506,296 @@
   // Start feature 1
   bootstrapModifierTagsFeature();
 
+
+  // ---- Toolkit UI: Modes & Image Scanner ----
+  function initToolkit() {
+    console.log('[MBT] Initializing Toolkit UI');
+    const MBT = (window.MBT = window.MBT || {});
+    if (MBT._initializedToolkit) return;
+    MBT._initializedToolkit = true;
+
+    // --- Constants ---
+    const MODES = {
+      PASTE: 'paste',
+      SCAN: 'scan'
+    };
+
+    const KEYS = {
+      TOKENS: 'mbt_tokens',
+      INDEX: 'mbt_index',
+      MODE: 'mbt_mode'
+    };
+
+    // --- State Management ---
+    const State = {
+      getTokens: () => {
+        try { return JSON.parse(localStorage.getItem(KEYS.TOKENS) || '[]'); }
+        catch { return []; }
+      },
+      saveTokens: (t) => localStorage.setItem(KEYS.TOKENS, JSON.stringify(t)),
+
+      getIndex: () => parseInt(localStorage.getItem(KEYS.INDEX) || '0', 10),
+      saveIndex: (i) => localStorage.setItem(KEYS.INDEX, i),
+
+      getMode: () => localStorage.getItem(KEYS.MODE) || MODES.PASTE,
+      saveMode: (m) => localStorage.setItem(KEYS.MODE, m)
+    };
+
+    // --- Logic: Cleaning ---
+    const Cleaner = {
+      splitCamel: (s) => {
+        // "fooBar" -> "foo Bar"
+        s = s.replace(/([a-z])([A-Z])/g, '$1 $2');
+        s = s.replace(/([A-Z])([A-Z][a-z])/g, '$1 $2');
+        // "Item1" -> "Item 1"
+        s = s.replace(/([0-9])([A-Za-z])/g, '$1 $2');
+        s = s.replace(/([A-Za-z])([0-9])/g, '$1 $2');
+        return s.replace(/[_\-]/g, ' ').replace(/\s+/g, ' ').trim();
+      },
+      stripExt: (s) => s.replace(/\.[A-Za-z0-9]+$/, ''),
+      removeViewSuffixes: (s) => {
+        // remove (1), and trailing View names like Top, Side
+        let current = s.replace(/\(\d+\)$/, '').trim();
+        while (true) {
+          const next = current.replace(/(?:Top|Straight|Macro|Side|Angle|\d{1,3})$/i, '').replace(/[ _\-]+$/, '');
+          if (next === current) break;
+          current = next;
+        }
+        return current;
+      },
+      clean: (raw) => {
+        let s = Cleaner.stripExt(raw);
+        s = Cleaner.removeViewSuffixes(s);
+        s = Cleaner.splitCamel(s);
+        return s.replace(/^\W*\d+\W*/, '').trim(); // drop leading numbers/symbols
+      }
+    };
+
+    // --- Helper: Paste ---
+    async function smartPaste(text) {
+      if (!text) return;
+      const active = document.activeElement;
+      const success = document.execCommand('insertText', false, text);
+      if (!success) {
+        if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) {
+          const start = active.selectionStart;
+          const end = active.selectionEnd;
+          const val = active.value;
+          active.value = val.slice(0, start) + text + val.slice(end);
+          active.selectionStart = active.selectionEnd = start + text.length;
+          active.dispatchEvent(new Event('input', { bubbles: true }));
+        } else {
+          try { await navigator.clipboard.writeText(text); } catch (e) { }
+        }
+      }
+    }
+
+    // --- UI Construction ---
+    const fab = document.createElement('button');
+    fab.textContent = 'MBT';
+    Object.assign(fab.style, {
+      position: 'fixed', bottom: '20px', right: '20px', zIndex: '9999999',
+      padding: '10px 15px', background: '#333', color: 'white',
+      border: 'none', borderRadius: '50px', boxShadow: '0 4px 6px rgba(0,0,0,0.3)',
+      cursor: 'pointer', fontWeight: 'bold', fontFamily: 'sans-serif'
+    });
+    document.body.appendChild(fab);
+
+    const panel = document.createElement('div');
+    Object.assign(panel.style, {
+      position: 'fixed', bottom: '80px', right: '20px', zIndex: '9999999',
+      background: 'white', border: '1px solid #ccc', borderRadius: '8px',
+      boxShadow: '0 8px 24px rgba(0,0,0,0.2)', padding: '16px', width: '320px',
+      display: 'none', fontFamily: 'sans-serif', maxHeight: '80vh', overflowY: 'auto'
+    });
+    document.body.appendChild(panel);
+
+    fab.addEventListener('click', () => {
+      panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+      if (panel.style.display === 'block') refreshUI();
+    });
+
+    function refreshUI() {
+      panel.innerHTML = '';
+
+      // Header
+      const header = document.createElement('div');
+      header.style.marginBottom = '15px';
+      header.style.borderBottom = '1px solid #eee';
+      header.style.paddingBottom = '10px';
+      header.innerHTML = '<strong style="font-size:16px;">Menu Toolkit</strong>';
+      panel.appendChild(header);
+
+      // Mode Selector
+      const modeRow = document.createElement('div');
+      modeRow.style.marginBottom = '15px';
+      const modeLabel = document.createElement('label');
+      modeLabel.textContent = 'Select Tool: ';
+      modeLabel.style.marginRight = '8px';
+
+      const select = document.createElement('select');
+      select.innerHTML = `
+        <option value="${MODES.PASTE}">Sequential Paste (F2)</option>
+        <option value="${MODES.SCAN}">Image Scanner</option>
+      `;
+      select.value = State.getMode();
+      select.onchange = (e) => {
+        State.saveMode(e.target.value);
+        refreshUI();
+      };
+
+      modeRow.appendChild(modeLabel);
+      modeRow.appendChild(select);
+      panel.appendChild(modeRow);
+
+      const currentMode = State.getMode();
+
+      // --- Render Mode Content ---
+      if (currentMode === MODES.PASTE) {
+        renderPasteMode();
+      } else {
+        renderScanMode();
+      }
+
+      function renderPasteMode() {
+        const desc = document.createElement('p');
+        desc.style.fontSize = '12px';
+        desc.style.color = '#666';
+        desc.textContent = 'Pastes tokens line-by-line. Press F2 to paste within any field.';
+        panel.appendChild(desc);
+
+        const area = document.createElement('textarea');
+        area.style.width = '100%';
+        area.style.height = '120px';
+        area.style.marginBottom = '8px';
+        const tokens = State.getTokens();
+        area.value = tokens.join('\\n');
+        panel.appendChild(area);
+
+        const bar = document.createElement('div');
+        bar.style.display = 'flex';
+        bar.style.justifyContent = 'space-between';
+        bar.style.alignItems = 'center';
+
+        const saveBtn = document.createElement('button');
+        saveBtn.textContent = 'Save List';
+        saveBtn.onclick = () => {
+          const lines = area.value.split('\\n').filter(x => x.trim());
+          State.saveTokens(lines);
+          State.saveIndex(0);
+          refreshUI();
+        };
+        bar.appendChild(saveBtn);
+
+        const status = document.createElement('span');
+        status.style.fontSize = '11px';
+        const idx = State.getIndex();
+        status.textContent = tokens.length ? `Next: [${idx + 1}/${tokens.length}]` : 'Empty';
+        bar.appendChild(status);
+
+        panel.appendChild(bar);
+      }
+
+      function renderScanMode() {
+        const desc = document.createElement('div');
+        desc.style.fontSize = '12px';
+        desc.style.color = '#555';
+        desc.innerHTML = `
+            <p style="margin-top:0"><strong>Workflow:</strong></p>
+            <ol style="padding-left:20px; margin:5px 0;">
+                <li>Scroll page to load <strong>all</strong> images.</li>
+                <li>Click <strong>Scan & Load</strong>.</li>
+            </ol>
+            <p>This will extract titles, clean them (fix casing, remove extensions), and <strong>overwrite</strong> the Sequential Paste list.</p>
+          `;
+        panel.appendChild(desc);
+
+        const scanBtn = document.createElement('button');
+        scanBtn.textContent = 'Scan & Load Items';
+        scanBtn.style.width = '100%';
+        scanBtn.style.padding = '8px';
+        scanBtn.style.background = '#007bff';
+        scanBtn.style.color = 'white';
+        scanBtn.style.border = 'none';
+        scanBtn.style.borderRadius = '4px';
+        scanBtn.style.cursor = 'pointer';
+        scanBtn.onclick = () => {
+          // 1. Selector strategy (Logic from parse.py with BS4 selector)
+          // div[data-cy^="media-tile-image-title-"] h6
+          const nodes = document.querySelectorAll('div[data-cy^="media-tile-image-title-"] h6');
+          let rawNames = Array.from(nodes).map(el => el.textContent.trim()).filter(Boolean);
+
+          // Fallback if that selector fails (generic images)
+          if (rawNames.length === 0) {
+            const imgs = document.querySelectorAll('img');
+            rawNames = Array.from(imgs).map(img => img.title || img.alt).filter(t => t && t.trim());
+          }
+
+          if (rawNames.length === 0) {
+            alert("No image titles found. Make sure you've scrolled to load content.");
+            return;
+          }
+
+          // 2. Clean & Dedupe (Logic from fix.py)
+          const seen = new Set();
+          const cleanedList = [];
+
+          for (const raw of rawNames) {
+            const clean = Cleaner.clean(raw);
+            if (!clean) continue;
+
+            // Dedupe Key: case-folded, space-collapsed
+            const key = clean.toLowerCase().replace(/\s+/g, ' ');
+            if (seen.has(key)) continue;
+
+            seen.add(key);
+            cleanedList.push(clean);
+          }
+
+          if (cleanedList.length === 0) {
+            alert("Found items but they were filtered out by cleaning rules.");
+            return;
+          }
+
+          // 3. Save to Paste List
+          State.saveTokens(cleanedList);
+          State.saveIndex(0);
+
+          // 4. Feedback
+          const proceed = confirm(`Scanned & Cleaned ${cleanedList.length} items.\\n\\nSwitch to Sequential Paste mode now?`);
+          if (proceed) {
+            State.saveMode(MODES.PASTE);
+            refreshUI();
+          }
+        };
+        panel.appendChild(scanBtn);
+      }
+    }
+
+    // --- Hotkey Listener ---
+    document.addEventListener('keydown', async (e) => {
+      // F2 Logic
+      if (e.key === 'F2' && !e.shiftKey && !e.ctrlKey && !e.altKey) {
+        // Context-aware: Only works if mode is PASTE
+        // (Or user might expect it always work? The request says "when they select it... commands preset themselves")
+        // So we strictly respect the current mode.
+        if (State.getMode() !== MODES.PASTE) return;
+
+        const tokens = State.getTokens();
+        if (!tokens.length) return;
+
+        e.preventDefault(); e.stopPropagation();
+
+        const idx = State.getIndex();
+        await smartPaste(tokens[idx]);
+
+        State.saveIndex((idx + 1) % tokens.length);
+        // Refresh UI if open to show progress
+        if (panel.style.display === 'block') refreshUI();
+      }
+    });
+
+  }
+  initToolkit();
+
 })();
