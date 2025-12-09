@@ -387,7 +387,6 @@
               span.style.background = '#e0e0e0';
               span.style.color = '#888';
               span.style.opacity = '0.6';
-              span.style.textDecoration = 'line-through';
             }
 
             const tooltip = formatRangeTooltip(group);
