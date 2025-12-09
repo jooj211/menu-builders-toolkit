@@ -529,7 +529,14 @@
     // --- State Management ---
     const State = {
       getTokens: () => {
-        try { return JSON.parse(localStorage.getItem(KEYS.TOKENS) || '[]'); }
+        try {
+          const raw = JSON.parse(localStorage.getItem(KEYS.TOKENS) || '[]');
+          // Migration: If array of strings, convert to objects
+          if (Array.isArray(raw) && raw.length > 0 && typeof raw[0] === 'string') {
+            return raw.map(s => ({ name: s, url: '' }));
+          }
+          return raw;
+        }
         catch { return []; }
       },
       saveTokens: (t) => localStorage.setItem(KEYS.TOKENS, JSON.stringify(t)),
@@ -671,15 +678,18 @@
         const desc = document.createElement('p');
         desc.style.fontSize = '12px';
         desc.style.color = '#666';
-        desc.textContent = 'Pastes tokens line-by-line. Press F2 to paste within any field.';
+        desc.textContent = 'Pastes tokens line-by-line. F2 = Clean Name (Advances), F4 = Image URL (Stays).';
         panel.appendChild(desc);
 
         const area = document.createElement('textarea');
         area.style.width = '100%';
         area.style.height = '120px';
         area.style.marginBottom = '8px';
+        area.style.whiteSpace = 'pre';
+
         const tokens = State.getTokens();
-        area.value = tokens.join('\n');
+        // Display format: Name ||| URL
+        area.value = tokens.map(t => `${t.name} ||| ${t.url}`).join('\n');
         panel.appendChild(area);
 
         const bar = document.createElement('div');
@@ -691,7 +701,12 @@
         saveBtn.textContent = 'Save List';
         saveBtn.onclick = () => {
           const lines = area.value.split('\n').filter(x => x.trim());
-          State.saveTokens(lines);
+          const newTokens = lines.map(line => {
+            const parts = line.split(' ||| ');
+            if (parts.length < 2) return { name: line.trim(), url: '' };
+            return { name: parts[0].trim(), url: parts.slice(1).join(' ||| ').trim() };
+          });
+          State.saveTokens(newTokens);
           State.saveIndex(0);
           refreshUI();
         };
@@ -700,7 +715,9 @@
         const status = document.createElement('span');
         status.style.fontSize = '11px';
         const idx = State.getIndex();
+        const nextItem = tokens[idx] || {};
         status.textContent = tokens.length ? `Next: [${idx + 1}/${tokens.length}]` : 'Empty';
+        status.title = `Next Name: ${nextItem.name || '?'}`;
         bar.appendChild(status);
 
         panel.appendChild(bar);
@@ -730,36 +747,38 @@
         scanBtn.style.borderRadius = '4px';
         scanBtn.style.cursor = 'pointer';
         scanBtn.onclick = () => {
-          // 1. Selector strategy (Logic from parse.py with BS4 selector)
-          // div[data-cy^="media-tile-image-title-"] h6
-          const nodes = document.querySelectorAll('div[data-cy^="media-tile-image-title-"] h6');
-          let rawNames = Array.from(nodes).map(el => el.textContent.trim()).filter(Boolean);
+          // Robust Strategy: Find all images, grab src and best-guess title
+          const imgs = Array.from(document.querySelectorAll('img'));
 
-          // Fallback if that selector fails (generic images)
-          if (rawNames.length === 0) {
-            const imgs = document.querySelectorAll('img');
-            rawNames = Array.from(imgs).map(img => img.title || img.alt).filter(t => t && t.trim());
-          }
+          let rawItems = imgs.map(img => {
+            const name = img.title || img.alt || img.getAttribute('data-original-title') || '';
+            const url = img.src || img.getAttribute('data-src') || '';
+            return { name: name.trim(), url: url.trim() };
+          }).filter(item => item.name && item.url);
 
-          if (rawNames.length === 0) {
-            alert("No image titles found. Make sure you've scrolled to load content.");
+          if (rawItems.length === 0) {
+            alert("No valid images (with Name + URL) found.");
             return;
           }
 
-          // 2. Clean & Dedupe (Logic from fix.py)
+          // Dedupe & Clean
           const seen = new Set();
           const cleanedList = [];
 
-          for (const raw of rawNames) {
-            const clean = Cleaner.clean(raw);
-            if (!clean) continue;
+          for (const item of rawItems) {
+            const cleanName = Cleaner.clean(item.name);
+            if (!cleanName) continue;
 
-            // Dedupe Key: case-folded, space-collapsed
-            const key = clean.toLowerCase().replace(/\s+/g, ' ');
+            // Dedupe Key: URL usually unique enough? Or Name? 
+            // Let's dedupe by Clean Name to match previous behavior (grouping variants?)
+            // Actually, if we have different URLs for same Name, maybe we keep both?
+            // "Two lists" request implies synchronization. 
+            // Let's dedupe by Clean Name to ensure unique entries for the menu.
+            const key = cleanName.toLowerCase().replace(/\s+/g, ' ');
             if (seen.has(key)) continue;
 
             seen.add(key);
-            cleanedList.push(clean);
+            cleanedList.push({ name: cleanName, url: item.url });
           }
 
           if (cleanedList.length === 0) {
@@ -784,11 +803,8 @@
 
     // --- Hotkey Listener ---
     document.addEventListener('keydown', async (e) => {
-      // F2 Logic
-      if (e.key === 'F2' && !e.shiftKey && !e.ctrlKey && !e.altKey) {
-        // Context-aware: Only works if mode is PASTE
-        // (Or user might expect it always work? The request says "when they select it... commands preset themselves")
-        // So we strictly respect the current mode.
+      // F2 Logic (Name + Advance) or F4 Logic (URL + Stay)
+      if ((e.key === 'F2' || e.key === 'F4') && !e.shiftKey && !e.ctrlKey && !e.altKey) {
         if (State.getMode() !== MODES.PASTE) return;
 
         const tokens = State.getTokens();
@@ -797,9 +813,19 @@
         e.preventDefault(); e.stopPropagation();
 
         const idx = State.getIndex();
-        await smartPaste(tokens[idx]);
+        const item = tokens[idx];
 
-        State.saveIndex((idx + 1) % tokens.length);
+        if (e.key === 'F2') {
+          // Paste Name & Advance
+          console.log('[MBT] Pasting Name:', item.name);
+          await smartPaste(item.name);
+          State.saveIndex((idx + 1) % tokens.length);
+        } else {
+          // Paste URL & Stay
+          console.log('[MBT] Pasting URL:', item.url);
+          await smartPaste(item.url);
+        }
+
         // Refresh UI if open to show progress
         if (panel.style.display === 'block') refreshUI();
       }
