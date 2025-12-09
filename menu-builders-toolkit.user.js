@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Menu Builders' Toolkit
-// @namespace    https://github.com/<your-username>/menu-builders-toolkit
+// @namespace    https://github.com/jooj210/menu-builders-toolkit
 // @version      0.1.0
 // @description  Helper tools for Popmenu menu builders (modifier tags, etc.)
 // @author       Jonatas Dias
@@ -9,8 +9,8 @@
 // @grant        none
 //
 // NOTE: After first push, come back and set @updateURL and @downloadURL:
-// @updateURL    https://raw.githubusercontent.com/<your-username>/menu-builders-toolkit/main/menu-builders-toolkit.user.js
-// @downloadURL  https://raw.githubusercontent.com/<your-username>/menu-builders-toolkit/main/menu-builders-toolkit.user.js
+// @updateURL    https://raw.githubusercontent.com/jooj210/menu-builders-toolkit/main/menu-builders-toolkit.user.js
+// @downloadURL  https://raw.githubusercontent.com/jooj210/menu-builders-toolkit/main/menu-builders-toolkit.user.js
 // ==/UserScript==
 
 (function () {
@@ -302,85 +302,72 @@
   initModifierTagsFeature();
 
 
-  // ---- Feature 2, 3 & 4: Toolkit UI (Paste Tools + Image Scanner) ----
+  // ---- Toolkit UI: Modes & Image Scanner ----
   function initToolkit() {
     console.log('[MBT] Initializing Toolkit UI');
     const MBT = (window.MBT = window.MBT || {});
     if (MBT._initializedToolkit) return;
     MBT._initializedToolkit = true;
 
-    // --- State Keys ---
+    // --- Constants ---
+    const MODES = {
+      PASTE: 'paste',
+      SCAN: 'scan'
+    };
+
     const KEYS = {
-      SEQ_TOKENS: 'mbt_seq_tokens',
-      SEQ_INDEX: 'mbt_seq_index',
-      ITEM_TEXT: 'mbt_item_text',
-      ITEM_INDEX: 'mbt_item_index'
+      TOKENS: 'mbt_tokens',
+      INDEX: 'mbt_index',
+      MODE: 'mbt_mode'
     };
 
-    // --- Tag Code Mapping (Defaults) ---
-    const TAG_MAP = {
-      "Gluten-Free": "n-f",
-      "Vegan": "gan",
-      "Vegetarian": "ian"
-    };
-
-    // --- State Helpers ---
+    // --- State Management ---
     const State = {
-      getSeqTokens: () => {
-        try { return JSON.parse(localStorage.getItem(KEYS.SEQ_TOKENS) || '[]'); }
-        catch (e) { return []; }
+      getTokens: () => {
+        try { return JSON.parse(localStorage.getItem(KEYS.TOKENS) || '[]'); }
+        catch { return []; }
       },
-      saveSeqTokens: (t) => {
-        localStorage.setItem(KEYS.SEQ_TOKENS, JSON.stringify(t));
-      },
-      getSeqIndex: () => parseInt(localStorage.getItem(KEYS.SEQ_INDEX) || '0', 10),
-      saveSeqIndex: (i) => localStorage.setItem(KEYS.SEQ_INDEX, i),
+      saveTokens: (t) => localStorage.setItem(KEYS.TOKENS, JSON.stringify(t)),
 
-      getItemText: () => localStorage.getItem(KEYS.ITEM_TEXT) || '',
-      saveItemText: (t) => localStorage.setItem(KEYS.ITEM_TEXT, t),
-      getItemIndex: () => parseInt(localStorage.getItem(KEYS.ITEM_INDEX) || '-1', 10),
-      saveItemIndex: (i) => localStorage.setItem(KEYS.ITEM_INDEX, i)
+      getIndex: () => parseInt(localStorage.getItem(KEYS.INDEX) || '0', 10),
+      saveIndex: (i) => localStorage.setItem(KEYS.INDEX, i),
+
+      getMode: () => localStorage.getItem(KEYS.MODE) || MODES.PASTE,
+      saveMode: (m) => localStorage.setItem(KEYS.MODE, m)
     };
 
-    // --- Parser ---
-    function parseItemTagList(text) {
-      const lines = text.split('\n');
-      const items = [];
-      let section = '';
-      let pendingTitle = null;
-
-      for (let line of lines) {
-        line = line.trim();
-        if (!line) continue;
-
-        if (line.startsWith('**') && line.endsWith('**')) {
-          section = line.slice(2, -2);
-          pendingTitle = null;
-          continue;
+    // --- Logic: Cleaning (Ported from fix.py) ---
+    const Cleaner = {
+      splitCamel: (s) => {
+        // "fooBar" -> "foo Bar"
+        s = s.replace(/([a-z])([A-Z])/g, '$1 $2');
+        s = s.replace(/([A-Z])([A-Z][a-z])/g, '$1 $2');
+        // "Item1" -> "Item 1"
+        s = s.replace(/([0-9])([A-Za-z])/g, '$1 $2');
+        s = s.replace(/([A-Za-z])([0-9])/g, '$1 $2');
+        return s.replace(/[_\-]/g, ' ').replace(/\s+/g, ' ').trim();
+      },
+      stripExt: (s) => s.replace(/\.[A-Za-z0-9]+$/, ''),
+      removeViewSuffixes: (s) => {
+        // remove (1), and trailing View names like Top, Side, Straight
+        // We loop until no changes to catch "TopStraight"
+        let current = s.replace(/\(\d+\)$/, '').trim();
+        while (true) {
+          const next = current.replace(/(?:Top|Straight|Macro|Side|Angle|\d{1,3})$/i, '').replace(/[ _\-]+$/, '');
+          if (next === current) break;
+          current = next;
         }
-
-        if (line.toLowerCase().startsWith('tags:')) {
-          if (pendingTitle) {
-            const tagPart = line.substring(5);
-            const rawTags = tagPart.split(',').map(t => t.trim()).filter(Boolean);
-            const normedTags = rawTags.map(t => {
-              const k = t.toLowerCase().replace(/[-\s]/g, '');
-              if (k.includes("glutenfree")) return "Gluten-Free";
-              if (k.includes("vegan")) return "Vegan";
-              if (k.includes("vegetarian")) return "Vegetarian";
-              return t;
-            });
-            items.push({ title: pendingTitle, tags: normedTags, section });
-            pendingTitle = null;
-          }
-          continue;
-        }
-        pendingTitle = line;
+        return current;
+      },
+      clean: (raw) => {
+        let s = Cleaner.stripExt(raw);
+        s = Cleaner.removeViewSuffixes(s);
+        s = Cleaner.splitCamel(s);
+        return s.replace(/^\W*\d+\W*/, '').trim(); // drop leading numbers/symbols
       }
-      return items;
-    }
+    };
 
-    // --- Helpers ---
+    // --- Helper: Paste ---
     async function smartPaste(text) {
       if (!text) return;
       const active = document.activeElement;
@@ -394,23 +381,8 @@
           active.selectionStart = active.selectionEnd = start + text.length;
           active.dispatchEvent(new Event('input', { bubbles: true }));
         } else {
-          try {
-            await navigator.clipboard.writeText(text);
-            console.log('[MBT] Copied to clipboard:', text);
-          } catch (e) { console.error('[MBT] Clipboard failed', e); }
+          try { await navigator.clipboard.writeText(text); } catch (e) { }
         }
-      }
-    }
-
-    async function simulateTyping(text) {
-      await smartPaste(text);
-      const active = document.activeElement;
-      if (active) {
-        const opts = { bubbles: true, cancelable: true, keyCode: 13, key: 'Enter', which: 13 };
-        active.dispatchEvent(new KeyboardEvent('keydown', opts));
-        active.dispatchEvent(new KeyboardEvent('keypress', opts));
-        active.dispatchEvent(new KeyboardEvent('keyup', opts));
-        active.dispatchEvent(new Event('change', { bubbles: true }));
       }
     }
 
@@ -419,17 +391,17 @@
     fab.textContent = 'MBT';
     Object.assign(fab.style, {
       position: 'fixed', bottom: '20px', right: '20px', zIndex: '10000',
-      padding: '10px 15px', background: '#2196F3', color: 'white',
-      border: 'none', borderRadius: '50px', boxShadow: '0 4px 6px rgba(0,0,0,0.2)',
+      padding: '10px 15px', background: '#333', color: 'white',
+      border: 'none', borderRadius: '50px', boxShadow: '0 4px 6px rgba(0,0,0,0.3)',
       cursor: 'pointer', fontWeight: 'bold', fontFamily: 'sans-serif'
     });
     document.body.appendChild(fab);
 
     const panel = document.createElement('div');
     Object.assign(panel.style, {
-      position: 'fixed', bottom: '70px', right: '20px', zIndex: '10000',
+      position: 'fixed', bottom: '80px', right: '20px', zIndex: '10000',
       background: 'white', border: '1px solid #ccc', borderRadius: '8px',
-      boxShadow: '0 8px 16px rgba(0,0,0,0.2)', padding: '15px', width: '340px',
+      boxShadow: '0 8px 24px rgba(0,0,0,0.2)', padding: '16px', width: '320px',
       display: 'none', fontFamily: 'sans-serif', maxHeight: '80vh', overflowY: 'auto'
     });
     document.body.appendChild(panel);
@@ -439,203 +411,186 @@
       if (panel.style.display === 'block') refreshUI();
     });
 
-    function createSection(title, descText, storageKey, saveCallback) {
-      const wrap = document.createElement('div');
-      wrap.style.marginBottom = '20px';
-      wrap.style.borderBottom = '1px solid #eee';
-      wrap.style.paddingBottom = '10px';
-
-      const head = document.createElement('strong');
-      head.textContent = title;
-      head.style.display = 'block';
-      wrap.appendChild(head);
-
-      const desc = document.createElement('small');
-      desc.textContent = descText;
-      desc.style.display = 'block';
-      desc.style.color = '#666';
-      desc.style.marginBottom = '5px';
-      wrap.appendChild(desc);
-
-      const area = document.createElement('textarea');
-      area.style.width = '100%';
-      area.style.height = '80px';
-      area.style.marginBottom = '5px';
-      area.value = (storageKey === KEYS.SEQ_TOKENS
-        ? State.getSeqTokens().join('\n')
-        : State.getItemText());
-
-      wrap.appendChild(area);
-
-      const row = document.createElement('div');
-      row.style.display = 'flex';
-      row.style.justifyContent = 'space-between';
-      row.style.alignItems = 'center';
-
-      const btn = document.createElement('button');
-      btn.textContent = 'Save';
-      btn.onclick = () => {
-        saveCallback(area.value);
-        refreshUI();
-      };
-      row.appendChild(btn);
-
-      const status = document.createElement('span');
-      status.style.fontSize = '11px';
-
-      if (storageKey === KEYS.SEQ_TOKENS) {
-        const toks = State.getSeqTokens();
-        const idx = State.getSeqIndex();
-        status.textContent = toks.length ? `Next: [${idx + 1}/${toks.length}]` : 'Empty';
-      } else {
-        const txt = State.getItemText();
-        const items = parseItemTagList(txt);
-        const idx = State.getItemIndex();
-        status.textContent = items.length ? `Next: [${idx + 1}/${items.length}]` : 'Empty';
-      }
-
-      row.appendChild(status);
-      wrap.appendChild(row);
-      return wrap;
-    }
-
     function refreshUI() {
       panel.innerHTML = '';
-      const h3 = document.createElement('h3');
-      h3.textContent = 'MBT Settings';
-      h3.style.margin = '0 0 10px 0';
-      panel.appendChild(h3);
 
-      // Section 1: Sequential Paste
-      const s1 = createSection('Sequential Paste', 'F2 sends next line.', KEYS.SEQ_TOKENS,
-        (val) => {
-          const lines = val.split('\n').filter(x => x.trim());
-          State.saveSeqTokens(lines);
-          State.saveSeqIndex(0);
-        }
-      );
-      panel.appendChild(s1);
+      // Header
+      const header = document.createElement('div');
+      header.style.marginBottom = '15px';
+      header.style.borderBottom = '1px solid #eee';
+      header.style.paddingBottom = '10px';
+      header.innerHTML = '<strong style="font-size:16px;">Menu Toolkit</strong>';
+      panel.appendChild(header);
 
-      // Section 2: Item & Tag Paster
-      const s2 = createSection('Item & Tag Paster', 'F4=Title, Shift+F2=Tags.', KEYS.ITEM_TEXT,
-        (val) => {
-          State.saveItemText(val);
-          State.saveItemIndex(-1);
-        }
-      );
-      panel.appendChild(s2);
+      // Mode Selector
+      const modeRow = document.createElement('div');
+      modeRow.style.marginBottom = '15px';
+      const modeLabel = document.createElement('label');
+      modeLabel.textContent = 'Select Tool: ';
+      modeLabel.style.marginRight = '8px';
 
-      // Section 3: Image Scanner
-      const s3 = document.createElement('div');
-      s3.innerHTML = `<strong>Image Title Scanner</strong><br/><small>Extracts img titles/alts from page.</small>`;
-      s3.style.marginBottom = '20px';
-
-      const scanBtn = document.createElement('button');
-      scanBtn.textContent = 'Scan Images Now';
-      scanBtn.style.marginTop = '5px';
-      scanBtn.style.display = 'block';
-
-      const resArea = document.createElement('textarea');
-      resArea.style.width = '100%';
-      resArea.style.height = '60px';
-      resArea.style.marginTop = '5px';
-      resArea.placeholder = 'Results will appear here...';
-
-      scanBtn.onclick = () => {
-        const imgs = Array.from(document.querySelectorAll('img'));
-        const titles = imgs.map(img => {
-          return img.title || img.alt || img.getAttribute('data-original-title') || '';
-        }).filter(t => t.trim().length > 0);
-
-        if (titles.length === 0) {
-          resArea.value = 'No unique titles found.';
-        } else {
-          // unique only
-          const unique = [...new Set(titles)];
-          resArea.value = unique.join('\n');
-        }
+      const select = document.createElement('select');
+      select.innerHTML = `
+        <option value="${MODES.PASTE}">Sequential Paste (F2)</option>
+        <option value="${MODES.SCAN}">Image Scanner</option>
+      `;
+      select.value = State.getMode();
+      select.onchange = (e) => {
+        State.saveMode(e.target.value);
+        refreshUI();
       };
 
-      s3.appendChild(scanBtn);
-      s3.appendChild(resArea);
-      panel.appendChild(s3);
+      modeRow.appendChild(modeLabel);
+      modeRow.appendChild(select);
+      panel.appendChild(modeRow);
 
-      const help = document.createElement('div');
-      help.style.fontSize = '11px';
-      help.style.color = '#888';
-      help.innerHTML = `
-        <strong>Hotkeys:</strong><br/>
-        F2: Paste next sequential token.<br/>
-        F4: Paste next Item Title.<br/>
-        Shift+F2: Type tags for current Item.
-      `;
-      panel.appendChild(help);
+      const currentMode = State.getMode();
+
+      // --- Render Mode Content ---
+      if (currentMode === MODES.PASTE) {
+        renderPasteMode();
+      } else {
+        renderScanMode();
+      }
+
+      function renderPasteMode() {
+        const desc = document.createElement('p');
+        desc.style.fontSize = '12px';
+        desc.style.color = '#666';
+        desc.textContent = 'Pastes tokens line-by-line. Press F2 to paste within any field.';
+        panel.appendChild(desc);
+
+        const area = document.createElement('textarea');
+        area.style.width = '100%';
+        area.style.height = '120px';
+        area.style.marginBottom = '8px';
+        const tokens = State.getTokens();
+        area.value = tokens.join('\n');
+        panel.appendChild(area);
+
+        const bar = document.createElement('div');
+        bar.style.display = 'flex';
+        bar.style.justifyContent = 'space-between';
+        bar.style.alignItems = 'center';
+
+        const saveBtn = document.createElement('button');
+        saveBtn.textContent = 'Save List';
+        saveBtn.onclick = () => {
+          const lines = area.value.split('\n').filter(x => x.trim());
+          State.saveTokens(lines);
+          State.saveIndex(0);
+          refreshUI();
+        };
+        bar.appendChild(saveBtn);
+
+        const status = document.createElement('span');
+        status.style.fontSize = '11px';
+        const idx = State.getIndex();
+        status.textContent = tokens.length ? `Next: [${idx + 1}/${tokens.length}]` : 'Empty';
+        bar.appendChild(status);
+
+        panel.appendChild(bar);
+      }
+
+      function renderScanMode() {
+        const desc = document.createElement('div');
+        desc.style.fontSize = '12px';
+        desc.style.color = '#555';
+        desc.innerHTML = `
+            <p style="margin-top:0"><strong>Workflow:</strong></p>
+            <ol style="padding-left:20px; margin:5px 0;">
+                <li>Scroll page to load <strong>all</strong> images.</li>
+                <li>Click <strong>Scan & Load</strong>.</li>
+            </ol>
+            <p>This will extract titles, clean them (fix casing, remove extensions), and <strong>overwrite</strong> the Sequential Paste list.</p>
+          `;
+        panel.appendChild(desc);
+
+        const scanBtn = document.createElement('button');
+        scanBtn.textContent = 'Scan & Load Items';
+        scanBtn.style.width = '100%';
+        scanBtn.style.padding = '8px';
+        scanBtn.style.background = '#007bff';
+        scanBtn.style.color = 'white';
+        scanBtn.style.border = 'none';
+        scanBtn.style.borderRadius = '4px';
+        scanBtn.style.cursor = 'pointer';
+        scanBtn.onclick = () => {
+          // 1. Selector strategy (Logic from parse.py with BS4 selector)
+          // div[data-cy^="media-tile-image-title-"] h6
+          const nodes = document.querySelectorAll('div[data-cy^="media-tile-image-title-"] h6');
+          let rawNames = Array.from(nodes).map(el => el.textContent.trim()).filter(Boolean);
+
+          // Fallback if that selector fails (generic images)
+          if (rawNames.length === 0) {
+            const imgs = document.querySelectorAll('img');
+            rawNames = Array.from(imgs).map(img => img.title || img.alt).filter(t => t && t.trim());
+          }
+
+          if (rawNames.length === 0) {
+            alert("No image titles found. Make sure you've scrolled to load content.");
+            return;
+          }
+
+          // 2. Clean & Dedupe (Logic from fix.py)
+          const seen = new Set();
+          const cleanedList = [];
+
+          for (const raw of rawNames) {
+            const clean = Cleaner.clean(raw);
+            if (!clean) continue;
+
+            // Dedupe Key: case-folded, space-collapsed
+            const key = clean.toLowerCase().replace(/\s+/g, ' ');
+            if (seen.has(key)) continue;
+
+            seen.add(key);
+            cleanedList.push(clean);
+          }
+
+          if (cleanedList.length === 0) {
+            alert("Found items but they were filtered out by cleaning rules.");
+            return;
+          }
+
+          // 3. Save to Paste List
+          State.saveTokens(cleanedList);
+          State.saveIndex(0);
+
+          // 4. Feedback
+          const proceed = confirm(`Scanned & Cleaned ${cleanedList.length} items.\n\nSwitch to Sequential Paste mode now?`);
+          if (proceed) {
+            State.saveMode(MODES.PASTE);
+            refreshUI();
+          }
+        };
+        panel.appendChild(scanBtn);
+      }
     }
 
-    // --- Hotkey Listeners ---
+    // --- Hotkey Listener ---
     document.addEventListener('keydown', async (e) => {
-      // Feature: Sequential Paste (F2 only, no shift)
-      if (e.key === 'F2' && !e.shiftKey) {
-        const tokens = State.getSeqTokens();
+      // F2 Logic
+      if (e.key === 'F2' && !e.shiftKey && !e.ctrlKey && !e.altKey) {
+        // Context-aware: Only works if mode is PASTE
+        // (Or user might expect it always work? The request says "when they select it... commands preset themselves")
+        // So we strictly respect the current mode.
+        if (State.getMode() !== MODES.PASTE) return;
+
+        const tokens = State.getTokens();
         if (!tokens.length) return;
+
         e.preventDefault(); e.stopPropagation();
 
-        const idx = State.getSeqIndex();
+        const idx = State.getIndex();
         await smartPaste(tokens[idx]);
 
-        State.saveSeqIndex((idx + 1) % tokens.length);
+        State.saveIndex((idx + 1) % tokens.length);
+        // Refresh UI if open to show progress
         if (panel.style.display === 'block') refreshUI();
-        return;
-      }
-
-      // Feature: Item Paster (F4) -> Title
-      if (e.key === 'F4') {
-        const text = State.getItemText();
-        const items = parseItemTagList(text);
-        if (!items.length) return;
-        e.preventDefault(); e.stopPropagation();
-
-        let idx = State.getItemIndex();
-        idx++;
-        if (idx >= items.length) {
-          alert('End of Item list reached.');
-          return;
-        }
-        State.saveItemIndex(idx);
-
-        const item = items[idx];
-        console.log(`[MBT] Pasting title [${idx + 1}/${items.length}]: ${item.title}`);
-        await smartPaste(item.title);
-
-        if (panel.style.display === 'block') refreshUI();
-        return;
-      }
-
-      // Feature: Item Tags (Shift + F2) -> Codes
-      if (e.key === 'F2' && e.shiftKey) {
-        const text = State.getItemText();
-        const items = parseItemTagList(text);
-        if (!items.length) return;
-        e.preventDefault(); e.stopPropagation();
-
-        const idx = State.getItemIndex();
-        if (idx < 0 || idx >= items.length) {
-          console.warn('[MBT] No current item selected (Press F4 first).');
-          return;
-        }
-
-        const item = items[idx];
-        console.log(`[MBT] Typing tags for "${item.title}":`, item.tags);
-
-        for (const t of item.tags) {
-          const code = TAG_MAP[t];
-          if (code) {
-            await simulateTyping(code);
-            await new Promise(r => setTimeout(r, 200));
-          }
-        }
       }
     });
+
   }
   initToolkit();
 
