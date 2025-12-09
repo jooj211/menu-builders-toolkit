@@ -77,6 +77,7 @@
             modifierGroups {
               id
               name
+              isEnabled
               minSelectionsCount
               maxSelectionsCount
             }
@@ -85,6 +86,7 @@
               modifierGroups {
                 id
                 name
+                isEnabled
                 minSelectionsCount
                 maxSelectionsCount
               }
@@ -372,8 +374,21 @@
             span.style.border = '1px solid rgba(0,0,0,0.2)';
             span.style.borderRadius = '9999px';
             span.style.padding = '1px 6px';
-            span.style.background = '#f5f5f5';
             span.style.whiteSpace = 'nowrap';
+
+            // Check isEnabled (default to true if missing to be safe)
+            const isEnabled = group.isEnabled !== false;
+
+            if (isEnabled) {
+              span.style.background = '#f5f5f5';
+              span.style.color = '#000';
+            } else {
+              // Disabled look
+              span.style.background = '#e0e0e0';
+              span.style.color = '#888';
+              span.style.opacity = '0.6';
+              span.style.textDecoration = 'line-through';
+            }
 
             const tooltip = formatRangeTooltip(group);
             if (tooltip) {
