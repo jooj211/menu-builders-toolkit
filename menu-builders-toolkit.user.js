@@ -811,6 +811,8 @@
     }
 
     // --- Hotkey Listener ---
+    let lastPastedIndex = null;
+
     document.addEventListener('keydown', async (e) => {
       // F2 Logic (Name + Advance) or F4 Logic (URL/Raw + Stay)
       if ((e.key === 'F2' || e.key === 'F4') && !e.shiftKey && !e.ctrlKey && !e.altKey) {
@@ -822,16 +824,31 @@
         e.preventDefault(); e.stopPropagation();
 
         const idx = State.getIndex();
-        const item = tokens[idx];
 
         if (e.key === 'F2') {
           // Paste Name & Advance
+          const item = tokens[idx];
           console.log('[MBT] Pasting Name:', item.name);
           await smartPaste(item.name);
+
+          lastPastedIndex = idx;
           State.saveIndex((idx + 1) % tokens.length);
         } else {
-          // Paste Raw "URL" & Stay
-          console.log('[MBT] Pasting Raw:', item.url);
+          // F4: Smart "Peek Back" Logic
+          // If we just advanced (lastPastedIndex == idx - 1), user likely wants the Image for the Name they just pasted.
+          // Otherwise (fresh load, skipped F2), user likely wants the Image for the "Current" pending item.
+          let targetIdx = idx;
+          // Handle wrap-around edge case check carefully or simplified:
+          // Just checking strict idx-1 is safe for non-looping. 
+          // If loop occurred (max -> 0), idx is 0, last is max.
+
+          const prevIdx = (idx - 1 + tokens.length) % tokens.length;
+          if (lastPastedIndex !== null && lastPastedIndex === prevIdx) {
+            targetIdx = prevIdx;
+          }
+
+          const item = tokens[targetIdx];
+          console.log(`[MBT] Pasting Raw (Index ${targetIdx}):`, item.url);
           await smartPaste(item.url);
         }
 
