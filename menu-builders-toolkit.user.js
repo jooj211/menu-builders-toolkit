@@ -18,10 +18,11 @@
   console.log('[MBT] Menu Builders\' Toolkit loaded');
 
   // Only run on menus pages (adjust if needed)
-  //  if (!location.pathname.includes('/menus')) {
-  //    console.log('[MBT] Not on menus page, exiting');
-  //    return;
-  //  }
+  // Only run on menus pages (adjust if needed)
+  if (!location.pathname.includes('/menus')) {
+    console.log('[MBT] Not on menus page, exiting');
+    return;
+  }
 
   // ---- Feature 1: Modifier tags on menu items ----
 
@@ -627,6 +628,11 @@
     });
     document.body.appendChild(panel);
 
+    // Prevent interactions inside the panel from bubbling to the site (which might steal focus or close things)
+    ['click', 'mousedown', 'keydown', 'keyup', 'keypress'].forEach(evt => {
+      panel.addEventListener(evt, (e) => e.stopPropagation());
+    });
+
     fab.addEventListener('click', () => {
       panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
       if (panel.style.display === 'block') refreshUI();
@@ -686,6 +692,11 @@
         area.style.height = '120px';
         area.style.marginBottom = '8px';
         area.style.whiteSpace = 'pre';
+        area.style.overflow = 'auto';
+        area.style.border = '1px solid #999';
+        area.style.color = '#000';
+        area.style.backgroundColor = '#fff';
+        area.style.cursor = 'text';
 
         const tokens = State.getTokens();
         // Display format: Name ||| URL (if URL exists)
