@@ -688,8 +688,8 @@
         area.style.whiteSpace = 'pre';
 
         const tokens = State.getTokens();
-        // Display format: Name ||| URL
-        area.value = tokens.map(t => `${t.name} ||| ${t.url}`).join('\n');
+        // Display format: Name ||| URL (if URL exists)
+        area.value = tokens.map(t => t.url ? `${t.name} ||| ${t.url}` : t.name).join('\n');
         panel.appendChild(area);
 
         const bar = document.createElement('div');
