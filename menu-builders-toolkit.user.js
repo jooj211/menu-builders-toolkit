@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Menu Builders' Toolkit
 // @namespace    https://github.com/jooj211/menu-builders-toolkit
-// @version      0.2.3
+// @version      0.2.4
 // @description  Helper tools for Popmenu menu builders (modifier tags, etc.)
 // @author       Jonatas Dias
 // @match        https://my.popmenu.com/*
@@ -119,14 +119,38 @@
       // --- NEW: No Price Logic ---
       function hasPriceForDish(dish) {
         if (!dish) return false;
-        // Check selectedMenuItem first (POS), then fallback to dish (Manual)
-        const item = dish.selectedMenuItem || null;
-        const rawPrice = (item && item.price !== undefined && item.price !== null) ? item.price : dish.price;
 
-        if (rawPrice === null || typeof rawPrice === 'undefined') return false;
-        const priceNum = Number(rawPrice);
-        if (Number.isNaN(priceNum)) return false;
-        return priceNum !== 0; // 0 considered "no price"
+        // Helper: isValidPrice
+        const isValid = (p) => {
+          if (p === null || typeof p === 'undefined') return false;
+          const n = Number(p);
+          return !Number.isNaN(n) && n !== 0;
+        };
+
+        // 1. Check selectedMenuItem (POS)
+        const item = dish.selectedMenuItem;
+        if (item) {
+          if (isValid(item.price)) return true;
+          // Check sizes
+          if (Array.isArray(dish.sizes) && dish.sizes.some(s => isValid(s.price))) return true;
+          // Note: selectedMenuItem might have its own sizes structure in some schemas, 
+          // but usually sizes are on the Dish level or mirrored. 
+          // The payload shows 'sizes' on 'dish' and 'selectedMenuItem'. Let's check both if available.
+          // The payload actually showed `selectedMenuItem.sizes` in the example? 
+          // Wait, the payload showed `dish.sizes` AND `dish.selectedMenuItem.sizes`.
+          // `dish.selectedMenuItem.sizes` was present in the user payload? 
+          // Looking at payload: `dish.sizes` exists. `dish.selectedMenuItem` has `priceType: "sizes_price_type"` but `sizes` array inside `selectedMenuItem`?
+          // The payload provided by user shows `dish.sizes` (id 1223865...).
+          // `dish.selectedMenuItem` also has `sizes` (id 24162988...).
+          // So we should check `item.sizes` too.
+          if (Array.isArray(item.sizes) && item.sizes.some(s => isValid(s.price))) return true;
+        }
+
+        // 2. Fallback to dish (Manual)
+        if (isValid(dish.price)) return true;
+        if (Array.isArray(dish.sizes) && dish.sizes.some(s => isValid(s.price))) return true;
+
+        return false;
       }
 
       function highlightMissingPrice(card, dish) {
@@ -278,29 +302,37 @@
         const CUSTOM_QUERY_WITH_PRICE = `
         query menusDishModTags($menuItemId: Int!) {
   dish(menuItemId: $menuItemId) {
-    id
-    name
-    price
+            id
+            name
+            price
+            sizes {
+              id
+              price
+            }
             modifierGroups {
-      id
-      name
-      isEnabled
-      minSelectionsCount
-      maxSelectionsCount
-    }
+              id
+              name
+              isEnabled
+              minSelectionsCount
+              maxSelectionsCount
+            }
             selectedMenuItem {
-      id
-      price
+              id
+              price
+              sizes {
+                id
+                price
+              }
               modifierGroups {
-        id
-        name
-        isEnabled
-        minSelectionsCount
-        maxSelectionsCount
-      }
-    }
-  }
-} `;
+                id
+                name
+                isEnabled
+                minSelectionsCount
+                maxSelectionsCount
+              }
+            }
+          }
+        }`;
 
         const body = {
           operationName: 'menusDishModTags',
