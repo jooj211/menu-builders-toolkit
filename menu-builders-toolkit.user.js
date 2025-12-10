@@ -678,7 +678,7 @@
         const desc = document.createElement('p');
         desc.style.fontSize = '12px';
         desc.style.color = '#666';
-        desc.textContent = 'Pastes tokens line-by-line. F2 = Clean Name (Advances), F4 = Image URL (Stays).';
+        desc.textContent = 'Pastes tokens line-by-line. F2 = Clean Name (Advances), F4 = Raw Name (Stays).';
         panel.appendChild(desc);
 
         const area = document.createElement('textarea');
@@ -747,17 +747,23 @@
         scanBtn.style.borderRadius = '4px';
         scanBtn.style.cursor = 'pointer';
         scanBtn.onclick = () => {
-          // Robust Strategy: Find all images, grab src and best-guess title
-          const imgs = Array.from(document.querySelectorAll('img'));
+          // Reverted Strategy: Specific selector for image tiles
+          // logic from parse.py / previous script version
+          const nodes = document.querySelectorAll('div[data-cy^="media-tile-image-title-"] h6');
+          let rawItems = Array.from(nodes).map(el => {
+            const raw = el.textContent.trim();
+            return { raw: raw, clean: '' }; // Clean later
+          }).filter(x => x.raw);
 
-          let rawItems = imgs.map(img => {
-            const name = img.title || img.alt || img.getAttribute('data-original-title') || '';
-            const url = img.src || img.getAttribute('data-src') || '';
-            return { name: name.trim(), url: url.trim() };
-          }).filter(item => item.name && item.url);
-
+          // Fallback only if specific selector fails completely (safe fallback, maybe avoiding generic img)
           if (rawItems.length === 0) {
-            alert("No valid images (with Name + URL) found.");
+            // Try searching generic images but filter out small ones or logos? 
+            // Better to just alert if specific selector fails to avoid bad data.
+            // But let's check if the user *wants* fallback. 
+            // "it just gets one item with the name of the restaurant".
+            // So the generic fallback was the problem. We will disable generic fallback or make it smarter.
+            // Let's stick to the specific selector for now as calling it "Revert".
+            alert("No image titles found with specific selector (h6 inside media-tile). Scroll down?");
             return;
           }
 
@@ -766,19 +772,22 @@
           const cleanedList = [];
 
           for (const item of rawItems) {
-            const cleanName = Cleaner.clean(item.name);
+            const cleanName = Cleaner.clean(item.raw);
             if (!cleanName) continue;
 
-            // Dedupe Key: URL usually unique enough? Or Name? 
-            // Let's dedupe by Clean Name to match previous behavior (grouping variants?)
-            // Actually, if we have different URLs for same Name, maybe we keep both?
-            // "Two lists" request implies synchronization. 
-            // Let's dedupe by Clean Name to ensure unique entries for the menu.
-            const key = cleanName.toLowerCase().replace(/\s+/g, ' ');
+            // Dedupe by Raw -> Ensure we capture unique files
+            // OR Dedupe by Clean -> Ensure we capture unique Menu Item Names?
+            // User said: "save the raw names ... and also saving the cleaned image name"
+            // If we have "Burger.jpg" and "Burger(1).jpg", both clean to "Burger".
+            // If we dedupe by Clean, we lose one.
+            // If we dedupe by Raw, we keep both. F2 will paste "Burger" twice. 
+            // This might be desired if they have 2 images for the item?
+            // Let's dedupe by RAW to preserve all scanned images.
+            const key = item.raw;
             if (seen.has(key)) continue;
 
             seen.add(key);
-            cleanedList.push({ name: cleanName, url: item.url });
+            cleanedList.push({ name: cleanName, url: item.raw }); // Mapping 'url' property to raw name for F4
           }
 
           if (cleanedList.length === 0) {
@@ -803,7 +812,7 @@
 
     // --- Hotkey Listener ---
     document.addEventListener('keydown', async (e) => {
-      // F2 Logic (Name + Advance) or F4 Logic (URL + Stay)
+      // F2 Logic (Name + Advance) or F4 Logic (URL/Raw + Stay)
       if ((e.key === 'F2' || e.key === 'F4') && !e.shiftKey && !e.ctrlKey && !e.altKey) {
         if (State.getMode() !== MODES.PASTE) return;
 
@@ -821,8 +830,8 @@
           await smartPaste(item.name);
           State.saveIndex((idx + 1) % tokens.length);
         } else {
-          // Paste URL & Stay
-          console.log('[MBT] Pasting URL:', item.url);
+          // Paste Raw "URL" & Stay
+          console.log('[MBT] Pasting Raw:', item.url);
           await smartPaste(item.url);
         }
 
