@@ -17,6 +17,16 @@
 
   console.log('[MBT] Menu Builders\' Toolkit loaded');
 
+  // Shared State Manager (Hoisted)
+  window.MBT = window.MBT || {};
+  window.MBT.State = {
+    getSettings: () => {
+      try { return JSON.parse(localStorage.getItem('mbt_settings') || '{"showModifiers":true, "checkPrices":true}'); }
+      catch { return { showModifiers: true, checkPrices: true }; }
+    },
+    saveSettings: (s) => localStorage.setItem('mbt_settings', JSON.stringify(s))
+  };
+
   // Only run on menus pages (adjust if needed)
   // Only run on menus pages (adjust if needed)
   if (!location.pathname.includes('/menus')) {
@@ -72,39 +82,92 @@
       // Backup query (used when persisted query fails)
       const CUSTOM_QUERY = `
         query menusDishModTags($menuItemId: Int!) {
-          dish(menuItemId: $menuItemId) {
-            id
-            name
+  dish(menuItemId: $menuItemId) {
+    id
+    name
             modifierGroups {
-              id
-              name
-              isEnabled
-              minSelectionsCount
-              maxSelectionsCount
-            }
+      id
+      name
+      isEnabled
+      minSelectionsCount
+      maxSelectionsCount
+    }
             selectedMenuItem {
-              id
+      id
               modifierGroups {
-                id
-                name
-                isEnabled
-                minSelectionsCount
-                maxSelectionsCount
-              }
-            }
-          }
-        }
-      `;
+        id
+        name
+        isEnabled
+        minSelectionsCount
+        maxSelectionsCount
+      }
+    }
+  }
+}
+`;
 
       const formatRangeTooltip = (group) => {
         const min = group.minSelectionsCount;
         const max = group.maxSelectionsCount;
 
         const parts = [];
-        if (typeof min === 'number') parts.push(`Min: ${min}`);
-        if (typeof max === 'number') parts.push(`Max: ${max}`);
+        if (typeof min === 'number') parts.push(`Min: ${min} `);
+        if (typeof max === 'number') parts.push(`Max: ${max} `);
         return parts.join(' • ');
       };
+
+      // --- NEW: No Price Logic ---
+      function hasPriceForDish(dish) {
+        if (!dish) return false;
+        // Check selectedMenuItem first (POS), then fallback to dish (Manual)
+        const item = dish.selectedMenuItem || null;
+        const rawPrice = (item && item.price !== undefined && item.price !== null) ? item.price : dish.price;
+
+        if (rawPrice === null || typeof rawPrice === 'undefined') return false;
+        const priceNum = Number(rawPrice);
+        if (Number.isNaN(priceNum)) return false;
+        return priceNum !== 0; // 0 considered "no price"
+      }
+
+      function highlightMissingPrice(card, dish) {
+        // Check Setting
+        const settings = window.MBT.State.getSettings();
+        if (!settings.checkPrices) {
+          const existing = card.querySelector('.mbt-no-price-badge');
+          if (existing) existing.remove();
+          return;
+        }
+
+        const hasPrice = hasPriceForDish(dish);
+        let badge = card.querySelector('.mbt-no-price-badge');
+
+        if (hasPrice) {
+          if (badge) badge.remove();
+          return;
+        }
+
+        const headerContent = card.querySelector('.MuiCardHeader-content-2135') || card;
+
+        if (!badge) {
+          badge = document.createElement('span');
+          badge.className = 'mbt-no-price-badge';
+          badge.textContent = 'NO PRICE';
+          badge.style.marginLeft = '0.5rem';
+          badge.style.marginTop = '-0.5rem';
+          badge.style.fontSize = '10px';
+          badge.style.color = '#b00020';
+          badge.style.border = '1px solid #b00020';
+          badge.style.borderRadius = '9999px';
+          badge.style.padding = '1px 6px';
+          badge.style.background = '#ffebee';
+          badge.style.textTransform = 'uppercase';
+          badge.style.fontWeight = '600';
+        }
+
+        if (!badge.isConnected) {
+          headerContent.appendChild(badge);
+        }
+      }
 
       function getModifierGroupsFromDish(dish, menuItemId) {
         if (!dish) {
@@ -197,7 +260,7 @@
         );
 
         if (!resp.ok) {
-          throw new Error(`HTTP ${resp.status}`);
+          throw new Error(`HTTP ${resp.status} `);
         }
 
         const json = await resp.json();
@@ -210,38 +273,49 @@
       }
 
       async function fetchMenusDishCustom(menuItemId) {
+        // Updated to include price in the custom query if needed, 
+        // effectively merging the robust snippet's query fields.
+        const CUSTOM_QUERY_WITH_PRICE = `
+        query menusDishModTags($menuItemId: Int!) {
+  dish(menuItemId: $menuItemId) {
+    id
+    name
+    price
+            modifierGroups {
+      id
+      name
+      isEnabled
+      minSelectionsCount
+      maxSelectionsCount
+    }
+            selectedMenuItem {
+      id
+      price
+              modifierGroups {
+        id
+        name
+        isEnabled
+        minSelectionsCount
+        maxSelectionsCount
+      }
+    }
+  }
+} `;
+
         const body = {
           operationName: 'menusDishModTags',
-          query: CUSTOM_QUERY,
+          query: CUSTOM_QUERY_WITH_PRICE,
           variables: { menuItemId },
         };
-
-        console.log(
-          '[MBT][MOD-TAGS] [custom] Fetching menusDishModTags for',
-          menuItemId,
-          body
-        );
-
+        // ... (rest is fetch)
+        console.log('[MBT] [custom] Fetching dish+price for', menuItemId);
         const resp = await fetch(GRAPHQL_ENDPOINT, {
           method: 'POST',
           credentials: 'same-origin',
-          headers: {
-            'content-type': 'application/json',
-            ...(csrf ? { 'x-csrf-token': csrf } : {}),
-          },
+          headers: { 'content-type': 'application/json', ...(csrf ? { 'x-csrf-token': csrf } : {}) },
           body: JSON.stringify(body),
         });
-
-        console.log(
-          '[MBT][MOD-TAGS] [custom] Response status for',
-          menuItemId,
-          resp.status
-        );
-
-        if (!resp.ok) {
-          throw new Error(`HTTP ${resp.status}`);
-        }
-
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         const json = await resp.json();
         console.log(
           '[MBT][MOD-TAGS] [custom] GraphQL JSON for',
@@ -367,7 +441,27 @@
             return;
           }
 
+          // --- NO PRICE BADGE ---
+          highlightMissingPrice(card, dish);
+
+          // --- MODIFIER TAGS ---
+          // Check Setting
+          const settings = window.MBT.State.getSettings();
+          if (!settings.showModifiers) {
+            tagContainer.textContent = '';
+            return;
+          }
+
+          tagContainer.textContent = '';
+
+          if (!modifierGroups.length) {
+            tagContainer.textContent = 'No modifiers';
+            tagContainer.style.opacity = '0.6';
+            return;
+          }
+
           for (const group of modifierGroups) {
+            // ... existing loop
             if (!group || !group.name) continue;
 
             const span = document.createElement('span');
@@ -392,9 +486,8 @@
 
             const tooltip = formatRangeTooltip(group);
             if (tooltip) {
-              span.title = tooltip; // native hover tooltip
+              span.title = tooltip;
             }
-
             tagContainer.appendChild(span);
           }
         } catch (err) {
@@ -405,6 +498,48 @@
             existing.style.opacity = '0.7';
           }
         }
+      }
+
+      // ---- Hook into fetch to react to updateMenuItem (from User Snippet) ----
+      if (typeof window.fetch === 'function' && !MBT._fetchPatchedForUpdates) {
+        MBT._fetchPatchedForUpdates = true;
+        const originalFetch = window.fetch;
+
+        window.fetch = function (...args) {
+          const fetchPromise = originalFetch.apply(this, args);
+          try {
+            const [input] = args;
+            let url = '';
+            if (typeof input === 'string') url = input;
+            else if (input && typeof input === 'object' && 'url' in input) url = input.url || '';
+
+            if (url.includes('/graphql')) {
+              fetchPromise.then(response => {
+                try {
+                  const clone = response.clone();
+                  clone.json().then(json => {
+                    const update = json?.data?.updateMenuItem;
+                    if (!update) return;
+
+                    let menuItemId = update.id;
+                    if (!menuItemId && update.dish?.items?.length) {
+                      menuItemId = update.dish.items[0].id; // Fallback
+                    }
+
+                    if (menuItemId) {
+                      const idNum = parseInt(menuItemId, 10);
+                      dishCache.delete(idNum); // Invalidate cache
+                      // Find and re-tag
+                      const card = document.getElementById(`${menuItemId} -menu - item`);
+                      if (card) tagCard(card);
+                    }
+                  });
+                } catch (e) { }
+              });
+            }
+          } catch (e) { }
+          return fetchPromise;
+        };
       }
 
       function scanAndTagAll() {
@@ -457,6 +592,8 @@
       });
 
       MBT.modTagsObserver = observer;
+      // Expose for settings to trigger
+      MBT.scanAndTagAll = scanAndTagAll;
 
       // ---- Debug helper: compare persisted vs custom for a given menuItemId ----
       MBT.debugMenusDish = async function (menuItemId) {
@@ -516,9 +653,11 @@
     MBT._initializedToolkit = true;
 
     // --- Constants ---
+    // --- Constants ---
     const MODES = {
       PASTE: 'paste',
-      SCAN: 'scan'
+      SCAN: 'scan',
+      SETTINGS: 'settings'
     };
 
     const KEYS = {
@@ -658,9 +797,10 @@
 
       const select = document.createElement('select');
       select.innerHTML = `
-        <option value="${MODES.PASTE}">Sequential Paste (F2)</option>
+  < option value = "${MODES.PASTE}" > Sequential Paste(F2)</option >
         <option value="${MODES.SCAN}">Image Scanner</option>
-      `;
+        <option value="${MODES.SETTINGS}">Settings</option>
+`;
       select.value = State.getMode();
       select.onchange = (e) => {
         State.saveMode(e.target.value);
@@ -676,8 +816,62 @@
       // --- Render Mode Content ---
       if (currentMode === MODES.PASTE) {
         renderPasteMode();
-      } else {
+      } else if (currentMode === MODES.SCAN) {
         renderScanMode();
+      } else {
+        renderSettingsMode();
+      }
+
+      function renderSettingsMode() {
+        const settings = window.MBT.State.getSettings();
+
+        const container = document.createElement('div');
+
+        const createToggle = (label, key) => {
+          const row = document.createElement('div');
+          row.style.marginBottom = '10px';
+          const lbl = document.createElement('label');
+          lbl.style.display = 'flex';
+          lbl.style.alignItems = 'center';
+
+          const chk = document.createElement('input');
+          chk.type = 'checkbox';
+          chk.checked = settings[key];
+          chk.style.marginRight = '8px';
+          chk.onchange = (e) => {
+            settings[key] = e.target.checked;
+            window.MBT.State.saveSettings(settings);
+            // Re-trigger tagging to apply changes immediately
+            const cards = document.querySelectorAll('[data-cy="menu_item_card"]');
+            // We need to re-run tagCard. Since tagCard is inside the other closure, 
+            // we cannot call it directly unless we exposed it. 
+            // However, reloading the page is safer/easier, OR we can try to re-run bootstrap logic?
+            // Actually, MBT.fetchMenusDish was exposed by snippet? 
+            // Let's just ask user to scroll/refresh or we can trigger a re-scan if we expose `scanAndTagAll` on `MBT`.
+            if (window.MBT.scanAndTagAll instanceof Function) {
+              window.MBT.scanAndTagAll();
+            } else {
+              alert('Settings saved. Scroll or refresh page to see changes.');
+            }
+          };
+
+          lbl.appendChild(chk);
+          lbl.appendChild(document.createTextNode(label));
+          row.appendChild(lbl);
+          return row;
+        };
+
+        container.appendChild(createToggle('Show Modifier Tags', 'showModifiers'));
+        container.appendChild(createToggle('Show "No Price" Badges', 'checkPrices'));
+
+        const info = document.createElement('p');
+        info.style.fontSize = '12px';
+        info.style.color = '#888';
+        info.style.marginTop = '15px';
+        info.textContent = 'Toggle features on/off. Updates apply to newly loaded items or after refresh.';
+        container.appendChild(info);
+
+        panel.appendChild(container);
       }
 
       function renderPasteMode() {
@@ -701,7 +895,7 @@
 
         const tokens = State.getTokens();
         // Display format: Name ||| URL (if URL exists)
-        area.value = tokens.map(t => t.url ? `${t.name} ||| ${t.url}` : t.name).join('\n');
+        area.value = tokens.map(t => t.url ? `${t.name} ||| ${t.url} ` : t.name).join('\n');
         panel.appendChild(area);
 
         const bar = document.createElement('div');
@@ -729,7 +923,7 @@
         const idx = State.getIndex();
         const nextItem = tokens[idx] || {};
         status.textContent = tokens.length ? `Next: [${idx + 1}/${tokens.length}]` : 'Empty';
-        status.title = `Next Name: ${nextItem.name || '?'}`;
+        status.title = `Next Name: ${nextItem.name || '?'} `;
         bar.appendChild(status);
 
         panel.appendChild(bar);
@@ -740,13 +934,13 @@
         desc.style.fontSize = '12px';
         desc.style.color = '#555';
         desc.innerHTML = `
-            <p style="margin-top:0"><strong>Workflow:</strong></p>
+  < p style = "margin-top:0" > <strong>Workflow:</strong></p >
             <ol style="padding-left:20px; margin:5px 0;">
                 <li>Scroll page to load <strong>all</strong> images.</li>
                 <li>Click <strong>Scan & Load</strong>.</li>
             </ol>
             <p>This will extract titles, clean them (fix casing, remove extensions), and <strong>overwrite</strong> the Sequential Paste list.</p>
-          `;
+`;
         panel.appendChild(desc);
 
         const scanBtn = document.createElement('button');
@@ -812,7 +1006,7 @@
           State.saveIndex(0);
 
           // 4. Feedback
-          const proceed = confirm(`Scanned & Cleaned ${cleanedList.length} items.\n\nSwitch to Sequential Paste mode now?`);
+          const proceed = confirm(`Scanned & Cleaned ${cleanedList.length} items.\n\nSwitch to Sequential Paste mode now ? `);
           if (proceed) {
             State.saveMode(MODES.PASTE);
             refreshUI();
@@ -860,7 +1054,7 @@
           }
 
           const item = tokens[targetIdx];
-          console.log(`[MBT] Pasting Raw (Index ${targetIdx}):`, item.url);
+          console.log(`[MBT] Pasting Raw(Index ${targetIdx}): `, item.url);
           await smartPaste(item.url);
         }
 
