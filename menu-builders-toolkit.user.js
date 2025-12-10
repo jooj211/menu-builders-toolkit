@@ -4,7 +4,7 @@
 // @version      0.2.6
 // @description  Helper tools for Popmenu menu builders (modifier tags, etc.)
 // @author       Jonatas Dias
-// @match        *
+// @match        https://my.popmenu.com/*
 // @run-at       document-idle
 // @grant        none
 //
