@@ -697,6 +697,7 @@
         area.style.color = '#000';
         area.style.backgroundColor = '#fff';
         area.style.cursor = 'text';
+        area.removeAttribute('readonly');
 
         const tokens = State.getTokens();
         // Display format: Name ||| URL (if URL exists)
