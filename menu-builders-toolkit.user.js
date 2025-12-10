@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         Menu Builders' Toolkit
 // @namespace    https://github.com/jooj211/menu-builders-toolkit
-// @version      0.2.4
+// @version      0.2.6
 // @description  Helper tools for Popmenu menu builders (modifier tags, etc.)
 // @author       Jonatas Dias
-// @match        https://my.popmenu.com/*
+// @match        *
 // @run-at       document-idle
 // @grant        none
 //
@@ -176,13 +176,15 @@
           badge = document.createElement('span');
           badge.className = 'mbt-no-price-badge';
           badge.textContent = 'NO PRICE';
-          badge.style.marginLeft = '0.5rem';
-          badge.style.marginTop = '-0.5rem';
-          badge.style.fontSize = '10px';
+          badge.style.display = 'inline-block';
+          badge.style.marginLeft = '1rem';
+          badge.style.marginTop = '0.5rem';
+          badge.style.marginBottom = '0.5rem'; // Add bottom margin for spacing if needed
+          badge.style.fontSize = '12px';
           badge.style.color = '#b00020';
           badge.style.border = '1px solid #b00020';
-          badge.style.borderRadius = '9999px';
-          badge.style.padding = '1px 6px';
+          badge.style.borderRadius = '9999px'; // Keep pill shape? User said "container", usually implies box, but pill is fine.
+          badge.style.padding = '0.5rem 1rem'; // Requested padding
           badge.style.background = '#ffebee';
           badge.style.textTransform = 'uppercase';
           badge.style.fontWeight = '600';
@@ -829,10 +831,10 @@
 
       const select = document.createElement('select');
       select.innerHTML = `
-  < option value = "${MODES.PASTE}" > Sequential Paste(F2)</option >
+        <option value="${MODES.PASTE}">Sequential Paste (F2)</option>
         <option value="${MODES.SCAN}">Image Scanner</option>
         <option value="${MODES.SETTINGS}">Settings</option>
-`;
+      `;
       select.value = State.getMode();
       select.onchange = (e) => {
         State.saveMode(e.target.value);
