@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Menu Builders' Toolkit
 // @namespace    https://github.com/jooj211/menu-builders-toolkit
-// @version      0.2.7
+// @version      0.2.8
 // @description  Helper tools for Popmenu menu builders (modifier tags, etc.)
 // @author       Jonatas Dias
 // @match        https://my.popmenu.com/*
@@ -1036,6 +1036,7 @@
           }
 
           // 3. Save to Paste List
+          cleanedList.sort((a, b) => a.name.localeCompare(b.name));
           State.saveTokens(cleanedList);
           State.saveIndex(0);
 
