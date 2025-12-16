@@ -468,15 +468,15 @@
           );
 
           tagContainer.textContent = '';
+          
+          // --- NO PRICE BADGE ---
+          highlightMissingPrice(card, dish);
 
           if (!modifierGroups.length) {
             tagContainer.textContent = 'No modifiers';
             tagContainer.style.opacity = '0.6';
             return;
           }
-
-          // --- NO PRICE BADGE ---
-          highlightMissingPrice(card, dish);
 
           // --- MODIFIER TAGS ---
           // Check Setting
