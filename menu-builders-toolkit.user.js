@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Menu Builders' Toolkit
 // @namespace    https://github.com/jooj211/menu-builders-toolkit
-// @version      0.2.10
+// @version      0.2.11
 // @description  Helper tools for Popmenu menu builders (modifier tags, etc.)
 // @author       Jonatas Dias
 // @match        https://my.popmenu.com/*
@@ -551,7 +551,7 @@
               fetchPromise.then(response => {
                 try {
                   const clone = response.clone();
-                  clone.json().then(json => {
+                  clone.json().then(async json => {
                     const update = json?.data?.updateMenuItem;
                     if (!update) return;
 
@@ -563,9 +563,12 @@
                     if (menuItemId) {
                       const idNum = parseInt(menuItemId, 10);
                       dishCache.delete(idNum); // Invalidate cache
-                      // Find and re-tag
-                      const card = document.getElementById(`${menuItemId} -menu - item`);
-                      if (card) tagCard(card);
+
+                      const card = document.getElementById(`${idNum}-menu-item`);
+                      if (card) {
+                        console.log('[MBT][MOD-TAGS] Retagging card after updateMenuItem', idNum);
+                        tagCard(card); // this will also re-run highlightMissingPrice
+                      }
                     }
                   });
                 } catch (e) { }
