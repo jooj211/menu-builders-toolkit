@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Menu Builders' Toolkit
 // @namespace    https://github.com/jooj211/menu-builders-toolkit
-// @version      0.2.9
+// @version      0.2.10
 // @description  Helper tools for Popmenu menu builders (modifier tags, etc.)
 // @author       Jonatas Dias
 // @match        https://my.popmenu.com/*
