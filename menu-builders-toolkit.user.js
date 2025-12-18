@@ -1,10 +1,11 @@
 // ==UserScript==
 // @name         Menu Builders' Toolkit
 // @namespace    https://github.com/jooj211/menu-builders-toolkit
-// @version      0.2.11
+// @version      0.2.13
 // @description  Helper tools for Popmenu menu builders (modifier tags, etc.)
 // @author       Jonatas Dias
 // @match        https://my.popmenu.com/*
+// @match        https://www.toasttab.com/*
 // @run-at       document-idle
 // @grant        none
 //
@@ -21,8 +22,8 @@
   window.MBT = window.MBT || {};
   window.MBT.State = {
     getSettings: () => {
-      try { return JSON.parse(localStorage.getItem('mbt_settings') || '{"showModifiers":true, "checkPrices":true}'); }
-      catch { return { showModifiers: true, checkPrices: true }; }
+      try { return JSON.parse(localStorage.getItem('mbt_settings') || '{"showModifiers":true, "checkPrices":true, "toastMenuName": "My Menu", "toastCsvName": "menu_export.csv"}'); }
+      catch { return { showModifiers: true, checkPrices: true, toastMenuName: "My Menu", toastCsvName: "menu_export.csv" }; }
     },
     saveSettings: (s) => localStorage.setItem('mbt_settings', JSON.stringify(s))
   };
@@ -136,14 +137,10 @@
           // Note: selectedMenuItem might have its own sizes structure in some schemas, 
           // but usually sizes are on the Dish level or mirrored. 
           // The payload shows 'sizes' on 'dish' and 'selectedMenuItem'. Let's check both if available.
-          // The payload actually showed `selectedMenuItem.sizes` in the example? 
-          // Wait, the payload showed `dish.sizes` AND `dish.selectedMenuItem.sizes`.
-          // `dish.selectedMenuItem.sizes` was present in the user payload? 
-          // Looking at payload: `dish.sizes` exists. `dish.selectedMenuItem` has `priceType: "sizes_price_type"` but `sizes` array inside `selectedMenuItem`?
-          // The payload provided by user shows `dish.sizes` (id 1223865...).
-          // `dish.selectedMenuItem` also has `sizes` (id 24162988...).
-          // So we should check `item.sizes` too.
           if (Array.isArray(item.sizes) && item.sizes.some(s => isValid(s.price))) return true;
+
+          // If selectedMenuItem exists, do not fallback to dish properties (other than sizes checked above).
+          return false;
         }
 
         // 2. Fallback to dish (Manual)
@@ -468,7 +465,7 @@
           );
 
           tagContainer.textContent = '';
-          
+
           // --- NO PRICE BADGE ---
           highlightMissingPrice(card, dish);
 
@@ -901,6 +898,44 @@
         container.appendChild(createToggle('Show Modifier Tags', 'showModifiers'));
         container.appendChild(createToggle('Show "No Price" Badges', 'checkPrices'));
 
+        // --- Toast Settings ---
+        const toastHead = document.createElement('h4');
+        toastHead.textContent = 'Toast Export Settings';
+        toastHead.style.marginTop = '15px';
+        toastHead.style.marginBottom = '5px';
+        container.appendChild(toastHead);
+
+        const createInput = (label, key) => {
+          const row = document.createElement('div');
+          row.style.marginBottom = '10px';
+
+          const lbl = document.createElement('label');
+          lbl.style.display = 'block';
+          lbl.style.fontSize = '12px';
+          lbl.style.marginBottom = '3px';
+          lbl.textContent = label;
+
+          const inp = document.createElement('input');
+          inp.type = 'text';
+          inp.value = settings[key] || '';
+          inp.style.width = '100%';
+          inp.style.padding = '4px';
+          inp.style.border = '1px solid #ccc';
+          inp.style.borderRadius = '4px';
+
+          inp.onchange = (e) => {
+            settings[key] = e.target.value;
+            window.MBT.State.saveSettings(settings);
+          };
+
+          row.appendChild(lbl);
+          row.appendChild(inp);
+          return row;
+        };
+
+        container.appendChild(createInput('Menu Name (for CSV column)', 'toastMenuName'));
+        container.appendChild(createInput('CSV Filename', 'toastCsvName'));
+
         const info = document.createElement('p');
         info.style.fontSize = '12px';
         info.style.color = '#888';
@@ -1102,6 +1137,368 @@
     });
 
   }
+  initToolkit();
+
+  // ---- Feature 3: Toast CSV Exporter ----
+  function initToastExporter() {
+    if (!location.host.includes('toasttab')) return;
+    console.log('[MBT] Initializing Toast CSV Exporter');
+
+    // Dependencies
+    const settings = window.MBT.State.getSettings();
+
+    // ===== CONFIG =====
+    // Dynamic config from settings, with fallbacks
+    const getMenuName = () => { const s = window.MBT.State.getSettings(); return s.toastMenuName || 'Abas Kitchen - Online Ordering'; };
+    const getCsvFilename = () => { const s = window.MBT.State.getSettings(); return s.toastCsvName || 'abas_kitchen_menu.csv'; };
+
+    const COLUMNS = [
+      'menu_name',
+      'section_name',
+      'section_description',
+      'item',
+      'price',
+      'description',
+      'type',
+      'size_name_0',
+      'size_price_0',
+      'size_name_1',
+      'size_price_1',
+      'size_name_2',
+      'size_price_2',
+      'size_name_3',
+      'size_price_3',
+      'parent_item',
+      'parent_group',
+      'parent_modifier',
+      'parent_modifier_group'
+    ];
+
+    const MODAL_SELECTOR = '.modalContent.itemModalContent[data-testid="modal-content"]';
+
+    // ===== STATE =====
+    const state = {
+      modifiers: [],          // { itemName, groupLabel, optionName, optionPrice }
+      itemToSection: {},      // { [itemName]: sectionName }
+      parsedItems: new Set()  // items we've already parsed modifiers for
+    };
+
+    // ===== HELPERS =====
+    const escapeCsv = (value) => {
+      if (value == null) return '';
+      const str = String(value).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+      if (/[",\n]/.test(str)) {
+        return `"${str.replace(/"/g, '""')}"`;
+      }
+      return str;
+    };
+
+    const getPriceNumber = (text) => {
+      if (!text) return '';
+      const cleaned = text.replace(/[^\d.,]/g, '');
+      if (!cleaned) return '';
+
+      const lastDot = cleaned.lastIndexOf('.');
+      const lastComma = cleaned.lastIndexOf(',');
+      let decimalSep = -1;
+      if (lastDot > lastComma) decimalSep = lastDot;
+      if (lastComma > lastDot) decimalSep = lastComma;
+
+      if (decimalSep !== -1) {
+        const intPart = cleaned.slice(0, decimalSep).replace(/[^\d]/g, '');
+        const decPart = cleaned.slice(decimalSep + 1).replace(/[^\d]/g, '');
+        return decPart ? `${intPart}.${decPart}` : intPart;
+      }
+      return cleaned.replace(/[^\d]/g, '');
+    };
+
+    const createEmptyRow = () => {
+      const row = {};
+      COLUMNS.forEach(col => { row[col] = ''; });
+      return row;
+    };
+
+    // ===== Section detection (from role="tabpanel") =====
+    const getSectionNameFromCard = (cardEl) => {
+      const panel = cardEl.closest('div[role="tabpanel"]');
+      if (!panel) return '';
+
+      // 1) Prefer aria-labelledby="Mains-tab"
+      const labelledBy = panel.getAttribute('aria-labelledby');
+      if (labelledBy) {
+        const labelEl = document.getElementById(labelledBy);
+        if (labelEl && labelEl.textContent.trim()) {
+          return labelEl.textContent.trim();
+        }
+      }
+
+      // 2) Fallback: header inside this panel
+      const header = panel.querySelector('.headerWrapper h2, h2');
+      if (header && header.textContent.trim()) {
+        return header.textContent.trim();
+      }
+
+      return '';
+    };
+
+    const addModifierOption = (itemName, groupLabel, optionName, optionPrice) => {
+      if (!itemName || !groupLabel || !optionName) return;
+      const exists = state.modifiers.some(m =>
+        m.itemName === itemName &&
+        m.groupLabel === groupLabel &&
+        m.optionName === optionName
+      );
+      if (exists) return;
+      state.modifiers.push({ itemName, groupLabel, optionName, optionPrice });
+    };
+
+    // ===== MODAL PARSING =====
+    const parseModal = (modal) => {
+      if (!modal) return;
+
+      // Find item name (works with and without image)
+      const titleEl =
+        modal.querySelector('.itemInfo .modalTitle .headerText span') ||
+        modal.querySelector('.itemInfo .modalTitle') ||
+        modal.querySelector('h2.modalTitle');
+
+      const itemName = titleEl ? titleEl.textContent.trim() : '';
+      if (!itemName) return;
+
+      // Avoid spamming re-parses for same item; but allow re-open if needed
+      // (we still dedupe options anyway).
+      console.log(`Parsing modifiers for item: "${itemName}"`);
+
+      const basePriceEl = modal.querySelector('.itemInfo .basePrice');
+      const basePrice = basePriceEl ? getPriceNumber(basePriceEl.textContent) : '';
+
+      const modSections = modal.querySelectorAll(
+        '.modSections .modSection[data-testid="selection-list"]'
+      );
+
+      let totalOptions = 0;
+
+      modSections.forEach((section) => {
+        const groupTitleEl = section.querySelector('.modSectionTitle');
+        let groupLabel = groupTitleEl ? groupTitleEl.textContent.trim() : '';
+        if (!groupLabel) return;
+
+        // The title element can sometimes include hidden screen-reader text;
+        // it's usually just the visible label, so we keep it simple.
+
+        const optionRows = section.querySelectorAll('.selections .row');
+        optionRows.forEach((row) => {
+          const nameEl =
+            row.querySelector('.modifierText .name') ||
+            row.querySelector('.name');
+          const optionName = nameEl ? nameEl.textContent.trim() : '';
+          if (!optionName) return;
+
+          const priceEl = row.querySelector('.price');
+          const optionPrice = priceEl ? getPriceNumber(priceEl.textContent) : '';
+
+          addModifierOption(itemName, groupLabel, optionName, optionPrice);
+          totalOptions += 1;
+        });
+      });
+
+      console.log(
+        `Captured modifiers for "${itemName}": ${modSections.length} group(s), ${totalOptions} option(s).`
+      );
+      state.parsedItems.add(itemName);
+    };
+
+    // ===== Mutation observer: detect modal content changes =====
+    const findModalForNode = (node) => {
+      if (!node) return null;
+
+      if (node.nodeType === Node.TEXT_NODE) {
+        node = node.parentElement;
+        if (!node) return null;
+      }
+      if (!(node instanceof HTMLElement)) return null;
+
+      if (node.matches(MODAL_SELECTOR)) return node;
+
+      const viaClosest = node.closest(MODAL_SELECTOR);
+      if (viaClosest) return viaClosest;
+
+      if (node.querySelector) {
+        const viaDesc = node.querySelector(MODAL_SELECTOR);
+        if (viaDesc) return viaDesc;
+      }
+      return null;
+    };
+
+    const observer = new MutationObserver((mutations) => {
+      const seenModals = new Set();
+      for (const m of mutations) {
+        // Check added nodes
+        m.addedNodes.forEach((node) => {
+          const modal = findModalForNode(node);
+          if (modal && !seenModals.has(modal)) {
+            seenModals.add(modal);
+            parseModal(modal);
+          }
+        });
+
+        // Also check the mutation target (helps if they reuse nodes and change text)
+        const targetModal = findModalForNode(m.target);
+        if (targetModal && !seenModals.has(targetModal)) {
+          seenModals.add(targetModal);
+          parseModal(targetModal);
+        }
+      }
+    });
+
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      characterData: true
+    });
+
+    // In case a modal is already open when we run the script:
+    document.querySelectorAll(MODAL_SELECTOR).forEach(parseModal);
+
+    // ===== ITEM LIST PARSING (cards in a section) =====
+    const collectItemRows = () => {
+      const rows = [];
+      const cards = document.querySelectorAll('li.item');
+
+      cards.forEach((li) => {
+        const titleEl =
+          li.querySelector('h3 .headerText span') ||
+          li.querySelector('h3 .headerText') ||
+          li.querySelector('h3');
+
+        const itemName = titleEl ? titleEl.textContent.trim() : '';
+        if (!itemName) return;
+
+        const descEl =
+          li.querySelector('[data-testid="item-content-description"]') ||
+          li.querySelector('.itemDescription') ||
+          li.querySelector('p.itemDescription');
+
+        const description = descEl ? descEl.textContent.trim() : '';
+
+        const priceEl =
+          li.querySelector('.price[data-testid^="price-"]') ||
+          li.querySelector('.price');
+
+        const rawPrice = priceEl ? priceEl.textContent.trim() : '';
+        const price = getPriceNumber(rawPrice);
+
+        const sectionName = getSectionNameFromCard(li);
+
+        if (itemName && !state.itemToSection[itemName]) {
+          state.itemToSection[itemName] = sectionName || '';
+        }
+
+        const row = createEmptyRow();
+        row.menu_name = getMenuName(); // Dynamic
+        row.section_name = sectionName;
+        row.section_description = '';
+        row.item = itemName;
+        row.price = price;
+        row.description = description;
+        row.type = 'dish';
+
+        rows.push(row);
+      });
+
+      return rows;
+    };
+
+    const buildModifierRows = () => {
+      const rows = [];
+      state.modifiers.forEach((m) => {
+        const row = createEmptyRow();
+        row.menu_name = getMenuName(); // Dynamic
+        row.section_name = state.itemToSection[m.itemName] || '';
+        row.section_description = '';
+        row.item = m.optionName;
+        row.price = m.optionPrice;
+        row.description = '';
+        row.type = 'modifier';
+        row.parent_item = m.itemName;
+        row.parent_group = m.groupLabel;
+        rows.push(row);
+      });
+      return rows;
+    };
+
+    // ===== EXPORT CSV =====
+    const exportCsv = () => {
+      const itemRows = collectItemRows();
+      const modifierRows = buildModifierRows();
+      const allRows = itemRows.concat(modifierRows);
+
+      if (!allRows.length) {
+        console.warn('No rows found. Make sure items are visible and try again.');
+        alert('No rows found. Make sure items are visible on screen.');
+        return;
+      }
+
+      const headerLine = COLUMNS.map(escapeCsv).join(',');
+      const dataLines = allRows.map(row =>
+        COLUMNS.map(col => escapeCsv(row[col])).join(',')
+      );
+      const csvContent = [headerLine, ...dataLines].join('\r\n');
+
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = getCsvFilename(); // Dynamic
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+
+      console.log(
+        `Downloaded ${getCsvFilename()} with ${itemRows.length} items and ${modifierRows.length} modifier options.`
+      );
+    };
+
+    // ===== PUBLIC HANDLE =====
+    window.toastMenuCsvExporter2 = {
+      exportCsv,
+      _state: state
+    };
+    // For backwards compatibility
+    window.toastMenuCsvExporter = window.toastMenuCsvExporter2;
+
+    // ===== FLOATING BUTTON =====
+    const btn = document.createElement('button');
+    btn.textContent = 'CSV Export';
+    btn.style.position = 'fixed';
+    btn.style.zIndex = '999999';
+    btn.style.right = '90px'; // Offset to avoid MBT button
+    btn.style.bottom = '16px';
+    btn.style.padding = '8px 12px';
+    btn.style.borderRadius = '4px';
+    btn.style.border = '1px solid #333';
+    btn.style.background = '#222';
+    btn.style.color = '#fff';
+    btn.style.fontSize = '12px';
+    btn.style.cursor = 'pointer';
+    btn.style.boxShadow = '0 2px 6px rgba(0,0,0,0.3)';
+    btn.style.opacity = '0.85';
+
+    btn.addEventListener('mouseenter', () => { btn.style.opacity = '1'; });
+    btn.addEventListener('mouseleave', () => { btn.style.opacity = '0.85'; });
+
+    btn.addEventListener('click', () => {
+      exportCsv();
+    });
+
+    document.body.appendChild(btn);
+
+    console.log('toastMenuCsvExporter v2 initialized.');
+    console.log('Workflow: open each item with modifiers once (while this script is loaded), then click "CSV Export".');
+  }
+
+  initToastExporter();
   initToolkit();
 
 })();
