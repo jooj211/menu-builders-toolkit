@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Menu Builders' Toolkit
 // @namespace    https://github.com/jooj211/menu-builders-toolkit
-// @version      0.2.13
+// @version      0.2.16
 // @description  Helper tools for Popmenu menu builders (modifier tags, etc.)
 // @author       Jonatas Dias
 // @match        https://my.popmenu.com/*
@@ -231,13 +231,64 @@
           }
         );
 
-        const merged = [...fromSelected];
-        const seen = new Set();
+        // Logic Update:
+        // 1. Existence: If selectedMenuItem (POS) exists, ONLY show groups from it. (Solves "deleted modifier still shows")
+        // 2. Status: Use the configuration (isEnabled, name) from the Dish (Root) if available. (Solves "shows as disabled")
+
+        let initialList = [];
+        const hasPOS = !!dish.selectedMenuItem;
+
+        if (hasPOS) {
+          initialList = fromSelected;
+        } else {
+          initialList = fromDish;
+        }
+
+        // Create Lookups from Root (Dish) to overlay config
+        const rootById = new Map();
+        const rootByName = new Map();
+        if (fromDish.length) {
+          fromDish.forEach(g => {
+            if (g.id) rootById.set(g.id, g);
+            if (g.name) rootByName.set(g.name.trim().toLowerCase(), g);
+          });
+        }
+
+        const merged = initialList.map(group => {
+          // If we are strictly using Dish list (no POS), no overlay needed (it IS the root).
+          // But if we are using POS list, try to find Root match.
+          if (!hasPOS) return group;
+
+          let match = rootById.get(group.id);
+          if (!match && group.name) match = rootByName.get(group.name.trim().toLowerCase());
+
+          if (match) {
+            // Overlay properties from Root
+            return {
+              ...group,
+              name: match.name, // Prefer Root name (cleaner)
+              isEnabled: match.isEnabled,
+              minSelectionsCount: match.minSelectionsCount,
+              maxSelectionsCount: match.maxSelectionsCount
+            };
+          }
+          return group;
+        });
+
+        const seenIds = new Set();
+        const seenNames = new Set();
 
         const deduped = merged.filter((group) => {
           if (!group || group.id == null) return false;
-          if (seen.has(group.id)) return false;
-          seen.add(group.id);
+
+          const nameKey = (group.name || '').trim().toLowerCase();
+
+          if (seenIds.has(group.id) || (nameKey && seenNames.has(nameKey))) {
+            return false;
+          }
+
+          seenIds.add(group.id);
+          if (nameKey) seenNames.add(nameKey);
           return true;
         });
 
