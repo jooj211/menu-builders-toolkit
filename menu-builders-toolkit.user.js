@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Menu Builders' Toolkit
 // @namespace    https://github.com/jooj211/menu-builders-toolkit
-// @version      0.2.16
+// @version      0.2.18
 // @description  Helper tools for Popmenu menu builders (modifier tags, etc.)
 // @author       Jonatas Dias
 // @match        https://my.popmenu.com/*
@@ -232,8 +232,10 @@
         );
 
         // Logic Update:
-        // 1. Existence: If selectedMenuItem (POS) exists, ONLY show groups from it. (Solves "deleted modifier still shows")
-        // 2. Status: Use the configuration (isEnabled, name) from the Dish (Root) if available. (Solves "shows as disabled")
+        // 1. Existence: If selectedMenuItem (POS) exists, ONLY show groups from it.
+        // 2. Status: Overlay from Root (Dish) ONLY if the property exists in Root.
+        //    (The persisted query often returns Root groups WITHOUT isEnabled, so we must not overwrite 
+        //    the Location's valid isEnabled=true with undefined).
 
         let initialList = [];
         const hasPOS = !!dish.selectedMenuItem;
@@ -255,22 +257,28 @@
         }
 
         const merged = initialList.map(group => {
-          // If we are strictly using Dish list (no POS), no overlay needed (it IS the root).
-          // But if we are using POS list, try to find Root match.
           if (!hasPOS) return group;
 
-          let match = rootById.get(group.id);
+          // Try to find the Root definition.
+          // Best link: group.rootModifierGroupId === root.id
+          let match = null;
+          if (group.rootModifierGroupId) {
+            match = rootById.get(group.rootModifierGroupId);
+          }
+          // Fallbacks
+          if (!match && group.id) match = rootById.get(group.id);
           if (!match && group.name) match = rootByName.get(group.name.trim().toLowerCase());
 
           if (match) {
-            // Overlay properties from Root
-            return {
-              ...group,
-              name: match.name, // Prefer Root name (cleaner)
-              isEnabled: match.isEnabled,
-              minSelectionsCount: match.minSelectionsCount,
-              maxSelectionsCount: match.maxSelectionsCount
-            };
+            // ONLY overlay if Root has the property defined.
+            const overlay = {};
+
+            if (match.name) overlay.name = match.name;
+            if (typeof match.isEnabled !== 'undefined') overlay.isEnabled = match.isEnabled;
+            if (typeof match.minSelectionsCount === 'number') overlay.minSelectionsCount = match.minSelectionsCount;
+            if (typeof match.maxSelectionsCount === 'number') overlay.maxSelectionsCount = match.maxSelectionsCount;
+
+            return { ...group, ...overlay };
           }
           return group;
         });
@@ -535,12 +543,7 @@
           }
 
           tagContainer.textContent = '';
-
-          if (!modifierGroups.length) {
-            tagContainer.textContent = 'No modifiers';
-            tagContainer.style.opacity = '0.6';
-            return;
-          }
+          tagContainer.style.opacity = '1'; // Reset opacity in case it was 0.6
 
           for (const group of modifierGroups) {
             // ... existing loop
